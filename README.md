@@ -1,22 +1,8 @@
-TVREMOTE PWA ONLY – KHÔNG WINDOWS, KHÔNG CÀI THÊM ỨNG DỤNG
+TVREMOTE PWA ONLY – https://ndwoodcompany.github.io/TVRemote/
 ========================================================
 IP mặc định:
 Sony BRAVIA KDL-42W674A: 192.168.1.234
 Android Smart TV Box Android 7: 192.168.1.233
-
-ĐƯA LÊN GITHUB PAGES
-1. Tạo repository, ví dụ TVRemote.
-2. Upload toàn bộ file/thư mục trong gói này vào root repository (index.html phải ở root).
-3. Settings > Pages > Deploy from a branch > main > /(root).
-4. Mở URL GitHub Pages bằng Chrome Android hoặc Safari iOS.
-5. Mở một lần khi có Internet để Service Worker cache tài nguyên.
-6. Android: Chrome > Add to Home screen. iOS: Safari > Share > Add to Home Screen.
-Không cần cài ứng dụng native.
-
-OFFLINE
-Giao diện, CSS, JS, icon và cấu hình đã lưu có thể dùng offline sau lần tải đầu.
-Điều khiển thiết bị cần điện thoại vẫn kết nối Wi-Fi LAN.
-Nhận dạng giọng nói tùy trình duyệt; có thể cần Internet/dịch vụ của trình duyệt.
 
 GIỚI HẠN KỸ THUẬT
 - PWA không có quyền raw TCP/UDP, ADB, SSDP multicast hoặc quét subnet tùy ý.
