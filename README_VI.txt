@@ -1,28 +1,31 @@
-TVREMOTE PWA ONLY – KHÔNG WINDOWS, KHÔNG CÀI THÊM ỨNG DỤNG
-========================================================
-IP mặc định:
-Sony BRAVIA KDL-42W674A: 192.168.1.234
-Android Smart TV Box Android 7: 192.168.1.233
+TVREMOTE = GIAO DIỆN WEB + BRIDGE NHỎ TRONG MẠNG LAN
+=====================================================
+Vì sao bản cũ trên GitHub Pages không điều khiển được:
+GitHub Pages là HTTPS; trình duyệt chặn trang HTTPS gọi http://192.168.x.x (mixed content), và TV/Box không
+trả CORS. JavaScript thuần không thể gửi ADB/TCP. => cần 1 "bridge" (bridge/server.js) chạy trong LAN.
+Bridge vừa phục vụ giao diện, vừa gửi lệnh: Sony qua IRCC/Wake-on-LAN, Android Box qua ADB.
+GitHub Pages chỉ còn để xem giao diện thử (hiện cảnh báo đỏ), KHÔNG dùng để điều khiển.
 
-ĐƯA LÊN GITHUB PAGES
-1. Tạo repository, ví dụ TVRemote.
-2. Upload toàn bộ file/thư mục trong gói này vào root repository (index.html phải ở root).
-3. Settings > Pages > Deploy from a branch > main > /(root).
-4. Mở URL GitHub Pages bằng Chrome Android hoặc Safari iOS.
-5. Mở một lần khi có Internet để Service Worker cache tài nguyên.
-6. Android: Chrome > Add to Home screen. iOS: Safari > Share > Add to Home Screen.
-Không cần cài ứng dụng native.
+CÀI ĐẶT
+1) Chọn 1 thiết bị luôn bật, cùng mạng (PC Windows, Raspberry Pi, điện thoại cũ chạy Termux...).
+   Cài Node.js 18+ và adb (Android platform-tools; thêm vào PATH).
+2) Android Box: bật Tùy chọn nhà phát triển > Gỡ lỗi USB, và ADB qua mạng (cổng 5555).
+   Nếu không có mục ADB qua mạng: cắm USB 1 lần, chạy "adb tcpip 5555".
+   Lần đầu kết nối, màn hình sẽ hỏi cho phép ADB: chọn "Luôn cho phép".
+3) TV Sony: Cài đặt > Mạng > (Thiết lập mạng gia đình) > Điều khiển IP: bật, Xác thực = "Thường và Pre-Shared Key",
+   đặt PSK. Bật "Khởi động từ xa" nếu muốn bật TV từ standby (tên menu khác nhau tùy đời TV).
+   Muốn bật TV từ standby: nhập thêm địa chỉ MAC của TV trong Cài đặt của app.
+4) Chạy bridge:  node bridge/server.js   (Windows: bấm đúp start-bridge.bat)
+   Mở địa chỉ in ra (vd http://192.168.1.50:8765) trên điện thoại > vào tab Cài đặt > nhập IP, PSK... > Lưu >
+   Kiểm tra kết nối. Rồi Chrome > Thêm vào màn hình chính.
+5) Đẩy lên GitHub: KHÔNG commit bridge/config.json (chứa PSK; đã có trong .gitignore).
 
-OFFLINE
-Giao diện, CSS, JS, icon và cấu hình đã lưu có thể dùng offline sau lần tải đầu.
-Điều khiển thiết bị cần điện thoại vẫn kết nối Wi-Fi LAN.
-Nhận dạng giọng nói tùy trình duyệt; có thể cần Internet/dịch vụ của trình duyệt.
-
-GIỚI HẠN KỸ THUẬT
-- PWA không có quyền raw TCP/UDP, ADB, SSDP multicast hoặc quét subnet tùy ý.
-- GitHub Pages là HTTPS. Gọi HTTP đến TV/Box có thể bị chặn bởi mixed-content; CORS cũng có thể chặn request. Safari iOS và Chrome Android có cách thực thi khác nhau.
-- Sony IRCC-IP có các mã lệnh phổ biến trong app, nhưng trình duyệt có thể chặn request. TV có thể cần bật Network Control/Remote Device và PSK. Không thể vượt CORS/mixed-content bằng JavaScript trên GitHub Pages.
-- Android 7 firmware mod không có HTTP remote API chung. ADB TCP cần raw TCP nên PWA không thể gọi. Chỉ điều khiển được nếu firmware đã có sẵn HTTP Remote Server; cần biết endpoint, method và payload cụ thể để tích hợp.
-- Voice search nhận câu nói trên điện thoại. Nút tìm kiếm hiện mở YouTube trên điện thoại; chưa thể chuyển kết quả sang Box nếu không có API remote tương thích.
-- Kiểm tra kết nối chỉ thử HTTP best-effort, KHÔNG phải quét LAN và không xác định chắc thiết bị online/offline.
-- Lệnh Box được để an toàn, không giả định API và không gửi payload đoán mò.
+DÙNG
+- Nút TV (trái trên): bật/tắt TV. Nút xanh/đỏ giữa: nguồn Box. Nút phải trên: chọn nguồn TV/HDMI 1-4.
+- D-pad, Back, Exit(=Home), VOL BOX: gửi tới Box qua ADB. VOL TV, Mute: gửi tới TV. Giữ nút để lặp lại.
+- Tìm kiếm: chạm micro (nói) hoặc nhập chữ rồi bấm:
+    "Tìm trên Box"  = mở link tìm kiếm YouTube trong app đã chọn (SmartTube/YouTube).
+    "Gõ vào ô nhập" = gõ chữ vào ô đang focus trên Box (mở app + chọn ô tìm kiếm trước bằng D-pad).
+    Chữ có dấu tiếng Việt cần cài ADBKeyboard (com.android.adbkeyboard) trên Box; bridge tự đổi bàn phím rồi trả lại.
+- Micro: Web Speech cần HTTPS nên có thể bị chặn khi mở http://IP. Khi đó dùng micro trên bàn phím (Gboard) trong ô nhập.
+- Box chậm (RK312x): lệnh ADB mất ~0.3-1 giây/phím, nên giữ nút sẽ lặp chậm hơn remote thật.

@@ -1,25 +1,49 @@
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
-let cfg={sonyIp:"192.168.1.234",boxIp:"192.168.1.233",psk:"",boxApi:"",...JSON.parse(localStorage.getItem("tvremote")||"{}")};
-for(let [id,k] of [["sonyIp","sonyIp"],["boxIp","boxIp"],["psk","psk"],["boxApi","boxApi"]])$("#"+id).value=cfg[k];
-function toast(t){$("#toast").textContent=t;$("#toast").classList.add("show");setTimeout(()=>$("#toast").classList.remove("show"),2700)}
-function log(t){let d=document.createElement("div");d.className="line";d.textContent=new Date().toLocaleTimeString()+" · "+t;$("#log").prepend(d)}
-function save(){cfg={sonyIp:$("#sonyIp").value.trim(),boxIp:$("#boxIp").value.trim(),psk:$("#psk").value,boxApi:$("#boxApi").value.trim().replace(/\/+$/,"")};localStorage.setItem("tvremote",JSON.stringify(cfg));toast("Đã lưu trên thiết bị này");log("Lưu cấu hình")}
-$("#save").onclick=save;
-const codes={power:"AAAAAQAAAAEAAAAVAw==",hdmi1:"AAAAAgAAABoAAABaAw==",hdmi2:"AAAAAgAAABoAAABbAw==",input:"AAAAAQAAAAEAAAAlAw==",volUp:"AAAAAQAAAAEAAAASAw==",volDown:"AAAAAQAAAAEAAAATAw==",mute:"AAAAAQAAAAEAAAAUAw==",home:"AAAAAQAAAAEAAABgAw==",back:"AAAAAgAAAJcAAAAjAw=="};
-async function sony(cmd){save();let xml=`<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:X_SendIRCC xmlns:u="urn:schemas-sony-com:service:IRCC:1"><IRCCCode>${codes[cmd]}</IRCCCode></u:X_SendIRCC></s:Body></s:Envelope>`;try{let headers={"Content-Type":"text/xml; charset=UTF-8","SOAPAction":'"urn:schemas-sony-com:service:IRCC:1#X_SendIRCC"'};if(cfg.psk)headers["X-Auth-PSK"]=cfg.psk;let r=await fetch("http://"+cfg.sonyIp+"/sony/IRCC",{method:"POST",headers,body:xml});if(!r.ok)throw Error("HTTP "+r.status);toast("Sony đã nhận lệnh "+cmd);log("Sony "+cmd+" OK")}catch(e){toast("Sony không nhận được lệnh: "+e.message);log("Sony "+cmd+" thất bại; khả năng HTTPS/CORS chặn hoặc PSK/API không đúng")}}
-$$("[data-sony]").forEach(b=>b.onclick=()=>sony(b.dataset.sony));
-function box(key){if(!cfg.boxApi){toast("Chưa có HTTP Remote API trên Box");log("Box "+key+" chưa gửi: firmware API chưa xác định");return}toast("Cần biết chính xác endpoint và payload của firmware Box");log("Không đoán endpoint cho lệnh "+key)}
-$$("[data-box]").forEach(b=>b.onclick=()=>box(b.dataset.box));
-async function probe(ip){for(let u of ["http://"+ip+"/","http://"+ip+":8080/"]){try{await fetch(u,{mode:"no-cors",cache:"no-store",signal:AbortSignal.timeout(2500)});return "Đã thử HTTP; không đọc được phản hồi do CORS"}catch(e){}}return "Không xác minh được (CORS/HTTPS hoặc không có web server)"} 
-async function diag(){save();$("#results").textContent="Đang thử kết nối…";let a=await probe(cfg.sonyIp),b=await probe(cfg.boxIp);$("#results").innerHTML="";for(let [n,ip,s] of [["Sony",cfg.sonyIp,a],["Android Box",cfg.boxIp,b]]){let d=document.createElement("div");d.textContent=n+" · "+ip+" — "+s;$("#results").append(d)}log("Kiểm tra best-effort xong")}
-$("#diag").onclick=diag;
-const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
-if(SR){rec=new SR();rec.lang="vi-VN";rec.interimResults=false;rec.onstart=()=>$("#voiceStatus").textContent="Đang nghe…";rec.onresult=e=>{$("#query").value=e.results[0][0].transcript;$("#voiceStatus").textContent="Đã nhận: "+e.results[0][0].transcript};rec.onerror=e=>$("#voiceStatus").textContent="Lỗi micro: "+e.error}
-else $("#voiceStatus").textContent="Trình duyệt không hỗ trợ Web Speech API; có thể nhập nội dung.";
-$("#mic").onclick=()=>{if(!rec){toast("Không hỗ trợ nhận dạng giọng nói trên trình duyệt này");return}try{rec.start()}catch(e){toast(e.message)}};
-function search(){let q=$("#query").value.trim();if(!q){toast("Nhập nội dung tìm kiếm");return}window.open("https://www.youtube.com/results?search_query="+encodeURIComponent(q),"_blank","noopener");toast("Mở kết quả YouTube trên điện thoại. Chuyển sang Box cần API tương thích.");log("Tìm kiếm: "+q)}
-$("#search").onclick=search;$("#query").addEventListener("keydown",e=>{if(e.key==="Enter")search()});$("#yt").onclick=()=>window.open("https://www.youtube.com/","_blank","noopener");$("#clear").onclick=()=>$("#log").replaceChildren();
-if("serviceWorker"in navigator&&location.protocol!=="file:")navigator.serviceWorker.register("./sw.js");
-
-$$(".nav").forEach(b=>b.onclick=()=>{$$(".view").forEach(v=>v.classList.toggle("active",v.id===b.dataset.view));$$(".nav").forEach(n=>n.classList.toggle("selected",n===b))});
-$("#mic").onclick=()=>{$("#voiceEntry").classList.toggle("show");if(rec){try{rec.start()}catch(e){toast(e.message)}}else toast("Trình duyệt không hỗ trợ nhận dạng giọng nói")};
+const INS={tv:'TV',hdmi1:'HDMI 1',hdmi2:'HDMI 2',hdmi3:'HDMI 3',hdmi4:'HDMI 4',input:'Chuyển vòng'};
+const APPS={'com.teamsmart.videomanager.tv':'SmartTube','com.liskovsoft.smarttubetv.beta':'SmartTube Beta','com.google.android.youtube.tv':'YouTube (Android TV)','com.google.android.youtube':'YouTube (bản điện thoại)','':'Mặc định của Box (có thể hiện hộp chọn)'};
+const F=[['sonyIp','IP Sony BRAVIA'],['psk','Sony PSK (nếu TV đã đặt)','password'],['tvMac','MAC của TV (tùy chọn – để bật TV từ standby)'],['boxIp','IP Android Box'],['adbPort','Cổng ADB (mặc định 5555)']];
+let target='box',tt;
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>e.classList.remove('show'),3000)}
+const st=t=>$('#st').textContent=t;
+async function api(p,b){let j;try{const r=await fetch('api/'+p,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});j=await r.json()}
+catch(e){$('#warn').hidden=false;toast('Không gọi được bridge');throw e}
+if(!j.ok){toast(j.error||'Lỗi');throw Error(j.error)}return j}
+const sendS=c=>api('sony',{cmd:c}),sendB=k=>api('box',{key:k});
+function hold(el,fn){let on=0,t;const loop=()=>{if(!on)return;fn().then(()=>{on&&(t=setTimeout(loop,40))}).catch(()=>on=0)};
+el.addEventListener('pointerdown',e=>{e.preventDefault();on=1;navigator.vibrate&&navigator.vibrate(10);fn().then(()=>{t=setTimeout(loop,420)}).catch(()=>on=0)});
+['pointerup','pointerleave','pointercancel'].forEach(n=>el.addEventListener(n,()=>{on=0;clearTimeout(t)}))}
+function bind(b,f){b.hasAttribute('data-r')?hold(b,f):b.addEventListener('click',()=>{navigator.vibrate&&navigator.vibrate(10);f().catch(()=>{})})}
+$$('[data-s]').forEach(b=>bind(b,()=>sendS(b.dataset.s)));
+$$('[data-b]').forEach(b=>bind(b,()=>sendB(b.dataset.b)));
+// nguồn vào
+const sh=$('#sheet>div');for(const k in INS){const b=document.createElement('button');b.textContent=INS[k];b.onclick=()=>{sendS(k).then(()=>{if(k!=='input'){localStorage.tvIn=k;cap()}}).catch(()=>{});$('#sheet').hidden=true};sh.append(b)}
+const cap=()=>$('#inCap').textContent=INS[localStorage.tvIn||'hdmi2'].toUpperCase();cap();
+$('#inBtn').onclick=()=>$('#sheet').hidden=false;$('#sheet').onclick=e=>{if(e.target.id==='sheet')e.target.hidden=true};
+// điều hướng
+$$('nav button').forEach(b=>b.onclick=()=>{$$('.view').forEach(v=>v.classList.toggle('on',v.id===b.dataset.v));$$('nav button').forEach(n=>n.classList.toggle('on',n===b))});
+// bàn phím số
+$('#pad').innerHTML='123456789*0#'.split('').map(k=>`<button>${k}</button>`).join('');
+$$('#pad button').forEach(b=>b.onclick=()=>{const k=b.textContent;(target==='tv'?(/\d/.test(k)?sendS('num'+k):Promise.resolve()):sendB(k)).catch(()=>{})});
+$$('#tgt button').forEach(b=>b.onclick=()=>{target=b.dataset.t;$$('#tgt button').forEach(x=>x.classList.toggle('on',x===b))});
+// giọng nói + gõ text
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+function manual(m){st(m);$('#q').focus()}
+$('#mic').onclick=()=>{if(!SR)return manual('Trình duyệt không hỗ trợ giọng nói – chạm ô nhập rồi dùng micro trên bàn phím (Gboard).');
+const r=new SR();r.lang=localStorage.lang||'vi-VN';r.interimResults=true;r.onstart=()=>st('Đang nghe…');
+r.onresult=e=>{const x=e.results[e.results.length-1];$('#q').value=x[0].transcript;if(x.isFinal){st('Đã nhận: '+x[0].transcript);doSearch()}};
+r.onerror=e=>manual('Micro trình duyệt không dùng được ('+e.error+'). Chạm ô nhập rồi bấm micro trên bàn phím.');
+try{r.start()}catch(e){}};
+const val=()=>{const q=$('#q').value.trim();if(!q)toast('Nhập hoặc nói nội dung trước');return q};
+async function doSearch(){const q=val();if(!q)return;st('Đang gửi tìm kiếm tới Box…');try{await api('box/search',{q});st('Đã gửi: '+q)}catch(e){st('Lỗi: '+e.message)}}
+$('#goSearch').onclick=doSearch;$('#q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch()});
+$('#goType').onclick=async()=>{const q=val();if(!q)return;st('Đang gõ vào Box…');try{await api('box/text',{text:q,enter:$('#ent').checked});st('Đã gõ: '+q)}catch(e){st('Lỗi: '+e.message)}};
+$('#goOpen').onclick=()=>api('box/open',{}).then(()=>st('Đã mở app trên Box')).catch(e=>st('Lỗi: '+e.message));
+// cài đặt
+const fm=$('#form');fm.innerHTML=F.map(([k,l,t])=>`<label>${l}</label><input type="${t||'text'}" id="f_${k}" autocomplete="off">`).join('')+
+`<label>App dùng cho "Tìm trên Box"</label><select id="f_searchApp">${Object.entries(APPS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
+<label>Ngôn ngữ giọng nói (trình duyệt)</label><select id="f_lang"><option value="vi-VN">Tiếng Việt</option><option value="en-US">English</option></select>`;
+$('#f_lang').value=localStorage.lang||'vi-VN';
+api('config').then(({cfg})=>{F.forEach(([k])=>{if(k!=='psk')$('#f_'+k).value=cfg[k]??''});$('#f_psk').placeholder=cfg.pskSet?'(đã lưu – để trống nếu giữ nguyên)':'';$('#f_searchApp').value=cfg.searchApp}).catch(()=>{});
+$('#save').onclick=()=>{localStorage.lang=$('#f_lang').value;const b={};F.concat([['searchApp']]).forEach(([k])=>b[k]=$('#f_'+k).value);api('config',b).then(()=>toast('Đã lưu')).catch(()=>{})};
+$('#diag').onclick=async()=>{$('#res').textContent='Đang kiểm tra…';try{const r=await api('status');$('#res').textContent='Sony: '+r.sony+'\nBox: '+r.box}catch(e){$('#res').textContent=''}};
+if('serviceWorker'in navigator&&isSecureContext)navigator.serviceWorker.register('sw.js');

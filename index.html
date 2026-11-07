@@ -1,9 +1,54 @@
-<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#1c202c"><link rel="manifest" href="./manifest.webmanifest"><link rel="apple-touch-icon" href="./icons/icon-192.png"><link rel="stylesheet" href="./style.css"><title>TVRemote</title></head><body><main class="app">
-<section id="remoteView" class="view active"><div class="top-controls"><button class="device" data-sony="power"><span>TV</span><small>SONY BRAVIA<br>KDL-42W674A</small></button><button class="power" data-box="POWER"><span>⏻</span><small>ANDROID TV BOX</small></button><button class="device" data-sony="hdmi2"><span>⇥</span><small>HDMI 2</small></button></div>
-<div class="dpad"><button class="up" data-box="UP">△</button><button class="left" data-box="LEFT">◁</button><button class="ok" data-box="OK">OK</button><button class="right" data-box="RIGHT">▷</button><button class="down" data-box="DOWN">▽</button></div>
-<div class="middle"><button class="outline" data-box="BACK">←</button><button class="outline" data-box="EXIT">EXIT</button></div>
-<div class="lower"><div class="volume"><button data-sony="volUp">＋</button><span>VOL</span><b>TV</b><button data-sony="volDown">－</button></div><div class="center"><button id="mic" class="mic">🎙</button><button class="outline mute" data-sony="mute">◀×</button></div><div class="volume"><button data-box="VOL+">＋</button><span>VOL</span><b>BOX</b><button data-box="VOL-">－</button></div></div>
-<div id="voiceEntry" class="voice"><input id="query" placeholder="Nói hoặc nhập nội dung tìm kiếm"><button id="search">Tìm</button><p id="voiceStatus">Chạm micro để tìm kiếm bằng giọng nói</p></div></section>
-<section id="keypadView" class="view"><h2>Bàn phím số</h2><div class="keys"><button data-box="1">1</button><button data-box="2">2</button><button data-box="3">3</button><button data-box="4">4</button><button data-box="5">5</button><button data-box="6">6</button><button data-box="7">7</button><button data-box="8">8</button><button data-box="9">9</button><button data-box="*">*</button><button data-box="0">0</button><button data-box="#">#</button></div></section>
-<section id="settingsView" class="view settings"><h2>Cài đặt</h2><div class="field"><label>IP Sony BRAVIA</label><input id="sonyIp" value="192.168.1.234"></div><div class="field"><label>IP Android Box</label><input id="boxIp" value="192.168.1.233"></div><div class="field"><label>Sony PSK (nếu đã cấu hình)</label><input id="psk" type="password" placeholder="Để trống nếu không dùng"></div><div class="field"><label>Box HTTP Remote URL (nếu firmware có)</label><input id="boxApi" placeholder="Ví dụ http://192.168.1.233:8080"></div><div class="actions"><button id="save">Lưu cấu hình</button><button id="diag">Kiểm tra kết nối</button><button id="yt">Mở YouTube</button></div><div id="results" class="result">Chưa kiểm tra.</div><h3>Nhật ký</h3><button id="clear">Xóa nhật ký</button><div id="log"></div><p class="hint">Cấu hình lưu trên trình duyệt. PWA không thể tự quét LAN hoặc vượt CORS/HTTPS. Android Box chỉ điều khiển được nếu firmware có HTTP Remote API tương thích.</p></section>
-<nav class="bottom"><button class="nav selected" data-view="remoteView">▢</button><button class="nav" data-view="keypadView">▦</button><button class="nav" data-view="settingsView">⚙</button></nav></main><div id="toast"></div><script src="./app.js"></script></body></html>
+<!doctype html><html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="theme-color" content="#1c202c"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css"><title>TVRemote</title></head><body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="power" viewBox="0 0 48 48"><path d="M15.5 10.5A17.7 17.7 0 1 0 32.5 10.5M24 5V25"/></symbol>
+<symbol id="inp" viewBox="0 0 48 48"><path d="M22 14h18a4 4 0 0 1 4 4v12a4 4 0 0 1-4 4H22M4 24h20M17 17l7 7-7 7"/></symbol>
+<symbol id="mic" viewBox="0 0 48 48"><path fill="currentColor" stroke="none" d="M24 3a7 7 0 0 0-7 7v12a7 7 0 0 0 14 0V10a7 7 0 0 0-7-7z"/><path d="M12 21a12 12 0 0 0 24 0M24 34v9M16 43h16"/></symbol>
+<symbol id="mute" viewBox="0 0 48 48"><path fill="currentColor" stroke="none" d="M4 18h9l11-9v30l-11-9H4z"/><path d="M31 19l9 10M40 19l-9 10"/></symbol>
+<symbol id="back" viewBox="0 0 48 48"><path d="M42 24H8M19 12L7 24l12 12"/></symbol>
+<symbol id="plus" viewBox="0 0 48 48"><path d="M24 8v32M8 24h32"/></symbol>
+<symbol id="minus" viewBox="0 0 48 48"><path d="M8 24h32"/></symbol>
+<symbol id="tri" viewBox="0 0 48 38"><path d="M24 4L44 34H4z"/></symbol>
+<symbol id="rem" viewBox="0 0 48 48"><rect x="13" y="4" width="22" height="40" rx="9"/><rect x="20" y="12" width="8" height="10" rx="4"/></symbol>
+<symbol id="pad" viewBox="0 0 48 48"><path d="M8 6h6v6H8zM21 6h6v6h-6zM34 6h6v6h-6zM8 19h6v6H8zM21 19h6v6h-6zM34 19h6v6h-6zM8 32h6v6H8zM21 32h6v6h-6zM34 32h6v6h-6zM21 45h6"/></symbol>
+<symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+</defs></svg>
+<main class="app">
+<div id="warn" class="warn" hidden>Trang này không kết nối được bridge nên chưa điều khiển được thiết bị. Hãy mở bằng địa chỉ bridge trong mạng LAN (vd http://192.168.1.x:8765) – xem README_VI.txt.</div>
+<section id="remote" class="view on">
+<div class="stage">
+<button class="pill" style="--x:7.4;--y:0;--w:18.2;--h:10.6" data-s="power"><b>TV</b></button>
+<i class="cap" style="--x:2.5;--y:11.8;--w:28">SONY BRAVIA<br>KDL-42W674A</i>
+<button class="pill red" style="--x:40.9;--y:0;--w:18.2;--h:10.6" data-b="POWER"><svg class="ic"><use href="#power"/></svg></button>
+<i class="cap" style="--x:36;--y:11.8;--w:28">ANDROID TV BOX</i>
+<button class="pill" id="inBtn" style="--x:74.4;--y:0;--w:18.2;--h:10.6"><svg class="ic"><use href="#inp"/></svg></button>
+<i class="cap" id="inCap" style="--x:69.5;--y:11.8;--w:28">HDMI 2</i>
+<div class="ring" style="--x:22.3;--y:16;--w:55.6;--h:55.6">
+<button class="a up" data-b="UP" data-r><svg class="ic"><use href="#tri"/></svg></button>
+<button class="a l" data-b="LEFT" data-r><svg class="ic"><use href="#tri"/></svg></button>
+<button class="a r" data-b="RIGHT" data-r><svg class="ic"><use href="#tri"/></svg></button>
+<button class="a d" data-b="DOWN" data-r><svg class="ic"><use href="#tri"/></svg></button>
+<button class="ok" data-b="OK">OK</button></div>
+<button class="pill" style="--x:8.4;--y:67;--w:18.2;--h:10.4" data-b="BACK"><svg class="ic"><use href="#back"/></svg></button>
+<button class="pill" style="--x:73.4;--y:67;--w:18.2;--h:10.4" data-b="EXIT"><b style="font-size:calc(var(--k)*4.2)">EXIT</b></button>
+<div class="vol" style="--x:8.4;--y:82.5;--w:18.2;--h:53.7"><button data-s="volUp" data-r><svg class="ic"><use href="#plus"/></svg></button><div class="m"><span>VOL</span><em>TV</em></div><button data-s="volDown" data-r><svg class="ic"><use href="#minus"/></svg></button></div>
+<div class="vol" style="--x:73.4;--y:82.5;--w:18.2;--h:53.7"><button data-b="VOL+" data-r><svg class="ic"><use href="#plus"/></svg></button><div class="m"><span>VOL</span><em>BOX</em></div><button data-b="VOL-" data-r><svg class="ic"><use href="#minus"/></svg></button></div>
+<button class="pill mic" id="mic" style="--x:44.7;--y:91.2;--w:10.6;--h:18.1"><svg class="ic"><use href="#mic"/></svg></button>
+<button class="pill" style="--x:40.9;--y:120.7;--w:18.2;--h:10.4" data-s="mute"><svg class="ic"><use href="#mute"/></svg></button>
+</div>
+<div class="search">
+<input type="text" id="q" placeholder="Nói (chạm micro) hoặc nhập nội dung…" enterkeyhint="search" autocomplete="off">
+<div class="row"><button class="btn p" id="goSearch">Tìm trên Box</button><button class="btn" id="goType">Gõ vào ô nhập</button><button class="btn" id="goOpen">Mở app</button></div>
+<label class="chk"><input type="checkbox" id="ent" checked> Nhấn Enter sau khi gõ</label>
+<div class="st" id="st"></div></div>
+</section>
+<section id="keys" class="view"><div class="seg" id="tgt"><button data-t="tv">TV</button><button data-t="box" class="on">BOX</button></div><div class="pad" id="pad"></div></section>
+<section id="set" class="view set"><h2>Cài đặt</h2><form id="form" onsubmit="return false"></form>
+<div class="row"><button class="btn p" id="save">Lưu</button><button class="btn" id="diag">Kiểm tra kết nối</button></div><div class="st" id="res"></div></section>
+<nav><button class="on" data-v="remote"><svg class="ic"><use href="#rem"/></svg></button><button data-v="keys"><svg class="ic"><use href="#pad"/></svg></button><button data-v="set"><svg class="ic" style="stroke-width:1.6"><use href="#gear"/></svg></button></nav>
+</main>
+<div id="sheet" hidden><div><h3>Chọn nguồn vào của TV</h3></div></div>
+<div id="toast"></div>
+<script src="app.js"></script></body></html>
