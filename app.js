@@ -1,0 +1,22 @@
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+let cfg={sonyIp:"192.168.1.234",boxIp:"192.168.1.233",psk:"",boxApi:"",...JSON.parse(localStorage.getItem("tvremote")||"{}")};
+for(let [id,k] of [["sonyIp","sonyIp"],["boxIp","boxIp"],["psk","psk"],["boxApi","boxApi"]])$("#"+id).value=cfg[k];
+function toast(t){$("#toast").textContent=t;$("#toast").classList.add("show");setTimeout(()=>$("#toast").classList.remove("show"),2700)}
+function log(t){let d=document.createElement("div");d.className="line";d.textContent=new Date().toLocaleTimeString()+" · "+t;$("#log").prepend(d)}
+function save(){cfg={sonyIp:$("#sonyIp").value.trim(),boxIp:$("#boxIp").value.trim(),psk:$("#psk").value,boxApi:$("#boxApi").value.trim().replace(/\/+$/,"")};localStorage.setItem("tvremote",JSON.stringify(cfg));$("#sonyStatus").textContent=cfg.sonyIp;$("#boxStatus").textContent=cfg.boxIp;toast("Đã lưu trên thiết bị này");log("Lưu cấu hình")}
+$("#save").onclick=save;
+const codes={power:"AAAAAQAAAAEAAAAVAw==",hdmi1:"AAAAAgAAABoAAABaAw==",hdmi2:"AAAAAgAAABoAAABbAw==",input:"AAAAAQAAAAEAAAAlAw==",volUp:"AAAAAQAAAAEAAAASAw==",volDown:"AAAAAQAAAAEAAAATAw==",mute:"AAAAAQAAAAEAAAAUAw==",home:"AAAAAQAAAAEAAABgAw==",back:"AAAAAgAAAJcAAAAjAw=="};
+async function sony(cmd){save();let xml=`<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:X_SendIRCC xmlns:u="urn:schemas-sony-com:service:IRCC:1"><IRCCCode>${codes[cmd]}</IRCCCode></u:X_SendIRCC></s:Body></s:Envelope>`;try{let headers={"Content-Type":"text/xml; charset=UTF-8","SOAPAction":'"urn:schemas-sony-com:service:IRCC:1#X_SendIRCC"'};if(cfg.psk)headers["X-Auth-PSK"]=cfg.psk;let r=await fetch("http://"+cfg.sonyIp+"/sony/IRCC",{method:"POST",headers,body:xml});if(!r.ok)throw Error("HTTP "+r.status);toast("Sony đã nhận lệnh "+cmd);log("Sony "+cmd+" OK")}catch(e){toast("Sony không nhận được lệnh: "+e.message);log("Sony "+cmd+" thất bại; khả năng HTTPS/CORS chặn hoặc PSK/API không đúng")}}
+$$("[data-sony]").forEach(b=>b.onclick=()=>sony(b.dataset.sony));
+function box(key){if(!cfg.boxApi){toast("Chưa có HTTP Remote API trên Box");log("Box "+key+" chưa gửi: firmware API chưa xác định");return}toast("Cần biết chính xác endpoint và payload của firmware Box");log("Không đoán endpoint cho lệnh "+key)}
+$$("[data-box]").forEach(b=>b.onclick=()=>box(b.dataset.box));
+async function probe(ip){for(let u of ["http://"+ip+"/","http://"+ip+":8080/"]){try{await fetch(u,{mode:"no-cors",cache:"no-store",signal:AbortSignal.timeout(2500)});return "Đã thử HTTP; không đọc được phản hồi do CORS"}catch(e){}}return "Không xác minh được (CORS/HTTPS hoặc không có web server)"} 
+async function diag(){save();$("#results").textContent="Đang thử kết nối…";let a=await probe(cfg.sonyIp),b=await probe(cfg.boxIp);$("#results").innerHTML="";for(let [n,ip,s] of [["Sony",cfg.sonyIp,a],["Android Box",cfg.boxIp,b]]){let d=document.createElement("div");d.textContent=n+" · "+ip+" — "+s;$("#results").append(d)}log("Kiểm tra best-effort xong")}
+$("#diag").onclick=diag;
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
+if(SR){rec=new SR();rec.lang="vi-VN";rec.interimResults=false;rec.onstart=()=>$("#voiceStatus").textContent="Đang nghe…";rec.onresult=e=>{$("#query").value=e.results[0][0].transcript;$("#voiceStatus").textContent="Đã nhận: "+e.results[0][0].transcript};rec.onerror=e=>$("#voiceStatus").textContent="Lỗi micro: "+e.error}
+else $("#voiceStatus").textContent="Trình duyệt không hỗ trợ Web Speech API; có thể nhập nội dung.";
+$("#mic").onclick=()=>{if(!rec){toast("Không hỗ trợ nhận dạng giọng nói trên trình duyệt này");return}try{rec.start()}catch(e){toast(e.message)}};
+function search(){let q=$("#query").value.trim();if(!q){toast("Nhập nội dung tìm kiếm");return}window.open("https://www.youtube.com/results?search_query="+encodeURIComponent(q),"_blank","noopener");toast("Mở kết quả YouTube trên điện thoại. Chuyển sang Box cần API tương thích.");log("Tìm kiếm: "+q)}
+$("#search").onclick=search;$("#query").addEventListener("keydown",e=>{if(e.key==="Enter")search()});$("#yt").onclick=()=>window.open("https://www.youtube.com/","_blank","noopener");$("#clear").onclick=()=>$("#log").replaceChildren();
+if("serviceWorker"in navigator&&location.protocol!=="file:")navigator.serviceWorker.register("./sw.js");
