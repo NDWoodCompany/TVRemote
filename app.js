@@ -28,7 +28,7 @@ $$('#tgt button').forEach(b=>b.onclick=()=>{target=b.dataset.t;$$('#tgt button')
 // giọng nói + gõ text
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 function manual(m){st(m);$('#q').focus()}
-$('#mic').onclick=()=>{if(!SR)return manual('Trình duyệt không hỗ trợ giọng nói – chạm ô nhập rồi dùng micro trên bàn phím (Gboard).');
+$('#mic').onclick=()=>{$('#ssheet').hidden=false;if(!SR)return manual('Trình duyệt không hỗ trợ giọng nói – chạm ô nhập rồi dùng micro trên bàn phím (Gboard).');
 const r=new SR();r.lang=localStorage.lang||'vi-VN';r.interimResults=true;r.onstart=()=>st('Đang nghe…');
 r.onresult=e=>{const x=e.results[e.results.length-1];$('#q').value=x[0].transcript;if(x.isFinal){st('Đã nhận: '+x[0].transcript);doSearch()}};
 r.onerror=e=>manual('Micro trình duyệt không dùng được ('+e.error+'). Chạm ô nhập rồi bấm micro trên bàn phím.');
@@ -46,4 +46,5 @@ $('#f_lang').value=localStorage.lang||'vi-VN';
 api('config').then(({cfg})=>{F.forEach(([k])=>{if(k!=='psk')$('#f_'+k).value=cfg[k]??''});$('#f_psk').placeholder=cfg.pskSet?'(đã lưu – để trống nếu giữ nguyên)':'';$('#f_searchApp').value=cfg.searchApp}).catch(()=>{});
 $('#save').onclick=()=>{localStorage.lang=$('#f_lang').value;const b={};F.concat([['searchApp']]).forEach(([k])=>b[k]=$('#f_'+k).value);api('config',b).then(()=>toast('Đã lưu')).catch(()=>{})};
 $('#diag').onclick=async()=>{$('#res').textContent='Đang kiểm tra…';try{const r=await api('status');$('#res').textContent='Sony: '+r.sony+'\nBox: '+r.box}catch(e){$('#res').textContent=''}};
-if('serviceWorker'in navigator&&isSecureContext)navigator.serviceWorker.register('sw.js');
+if('serviceWorker'in navigator&&isSecureContext){const had=!!navigator.serviceWorker.controller;let rl;navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>r.update());navigator.serviceWorker.addEventListener('controllerchange',()=>{if(had&&!rl){rl=1;location.reload()}})}
+$('#ssheet').onclick=e=>{if(e.target.id==='ssheet')e.target.hidden=true};$('#warn').onclick=e=>e.currentTarget.hidden=true;

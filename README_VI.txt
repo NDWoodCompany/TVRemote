@@ -23,7 +23,7 @@ CÀI ĐẶT
 DÙNG
 - Nút TV (trái trên): bật/tắt TV. Nút xanh/đỏ giữa: nguồn Box. Nút phải trên: chọn nguồn TV/HDMI 1-4.
 - D-pad, Back, Exit(=Home), VOL BOX: gửi tới Box qua ADB. VOL TV, Mute: gửi tới TV. Giữ nút để lặp lại.
-- Tìm kiếm: chạm micro (nói) hoặc nhập chữ rồi bấm:
+- Tìm kiếm: chạm nút micro (mở bảng tìm kiếm, tự nghe), hoặc nhập chữ rồi bấm:
     "Tìm trên Box"  = mở link tìm kiếm YouTube trong app đã chọn (SmartTube/YouTube).
     "Gõ vào ô nhập" = gõ chữ vào ô đang focus trên Box (mở app + chọn ô tìm kiếm trước bằng D-pad).
     Chữ có dấu tiếng Việt cần cài ADBKeyboard (com.android.adbkeyboard) trên Box; bridge tự đổi bàn phím rồi trả lại.

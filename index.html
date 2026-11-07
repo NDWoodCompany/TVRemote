@@ -38,17 +38,17 @@
 <button class="pill mic" id="mic" style="--x:44.7;--y:91.2;--w:10.6;--h:18.1"><svg class="ic"><use href="#mic"/></svg></button>
 <button class="pill" style="--x:40.9;--y:120.7;--w:18.2;--h:10.4" data-s="mute"><svg class="ic"><use href="#mute"/></svg></button>
 </div>
-<div class="search">
-<input type="text" id="q" placeholder="Nói (chạm micro) hoặc nhập nội dung…" enterkeyhint="search" autocomplete="off">
-<div class="row"><button class="btn p" id="goSearch">Tìm trên Box</button><button class="btn" id="goType">Gõ vào ô nhập</button><button class="btn" id="goOpen">Mở app</button></div>
-<label class="chk"><input type="checkbox" id="ent" checked> Nhấn Enter sau khi gõ</label>
-<div class="st" id="st"></div></div>
 </section>
 <section id="keys" class="view"><div class="seg" id="tgt"><button data-t="tv">TV</button><button data-t="box" class="on">BOX</button></div><div class="pad" id="pad"></div></section>
 <section id="set" class="view set"><h2>Cài đặt</h2><form id="form" onsubmit="return false"></form>
 <div class="row"><button class="btn p" id="save">Lưu</button><button class="btn" id="diag">Kiểm tra kết nối</button></div><div class="st" id="res"></div></section>
 <nav><button class="on" data-v="remote"><svg class="ic"><use href="#rem"/></svg></button><button data-v="keys"><svg class="ic"><use href="#pad"/></svg></button><button data-v="set"><svg class="ic" style="stroke-width:1.6"><use href="#gear"/></svg></button></nav>
 </main>
-<div id="sheet" hidden><div><h3>Chọn nguồn vào của TV</h3></div></div>
+<div id="ssheet" class="sheet" hidden><div><div class="search">
+<input type="text" id="q" placeholder="Nói (chạm micro) hoặc nhập nội dung…" enterkeyhint="search" autocomplete="off">
+<div class="row"><button class="btn p" id="goSearch">Tìm trên Box</button><button class="btn" id="goType">Gõ vào ô nhập</button><button class="btn" id="goOpen">Mở app</button></div>
+<label class="chk"><input type="checkbox" id="ent" checked> Nhấn Enter sau khi gõ</label>
+<div class="st" id="st"></div></div></div></div>
+<div id="sheet" class="sheet" hidden><div><h3>Chọn nguồn vào của TV</h3></div></div>
 <div id="toast"></div>
 <script src="app.js"></script></body></html>
