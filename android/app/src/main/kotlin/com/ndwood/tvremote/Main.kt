@@ -88,13 +88,20 @@ object Tv {
         ircc(codes["power"]!!)
     }
     fun on() {
+        if (status() == "active") return
         repeat(5) {
             wol()
             try { ircc(codes["power"]!!); return } catch (e: Exception) { Thread.sleep(2500) }
         }
         throw Exception("Không gửi được lệnh bật TV")
     }
-    fun off() { ircc(codes["power"]!!) }
+    fun off() {
+        when (status()) {
+            "standby" -> return
+            "active" -> ircc(codes["power"]!!)
+            else -> throw Exception("Không đọc được trạng thái TV; không gửi lệnh nguồn để tránh bật nhầm TV đang ngủ")
+        }
+    }
     // Chờ TV bật xong (tối đa ~30s); nếu TV không báo trạng thái thì chờ cố định ~12s
     fun waitActive() {
         var seen = false
@@ -164,23 +171,42 @@ object Disc {
 object Scene {
     @Volatile var busy = false
     @Volatile var err = ""
+    @Volatile var lastCommandAt = 0L
     fun awake(c: Context) = (c.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
-    fun tvOn() { Tv.on(); Tv.waitActive(); Tv.ircc(Tv.codes[Cfg["hdmi"]] ?: Tv.codes["hdmi2"]!!) }
-    fun toggle(c: Context): String {
+    fun tvOn() {
+        Tv.on()
+        Tv.waitActive()
+        Tv.ircc(Tv.codes[Cfg["hdmi"]] ?: Tv.codes["hdmi2"]!!)
+    }
+    @Synchronized fun toggle(c: Context): String {
         if (busy) return "Đang xử lý…"
-        busy = true; err = ""
-        val on = !awake(c)
+        busy = true
+        err = ""
+        lastCommandAt = System.currentTimeMillis()
+        val wasAwake = awake(c)
         Thread {
             try {
-                if (on) { try { Adb.sh("input keyevent 224") } catch (e: Exception) { err = e.message ?: "" }; tvOn() }
-                else {
-                    try { Tv.off() } catch (e: Exception) { err = e.message ?: "" }
-                    Thread.sleep(1000); Adb.sh("input keyevent 223"); Thread.sleep(2000)
-                    if (awake(c)) Adb.sh("input keyevent 26")
+                if (wasAwake) {
+                    // Tắt TV trước, sau đó chỉ đưa màn hình Box vào sleep.
+                    // Không gửi KEYCODE_POWER dự phòng vì đó là phím toggle, có thể bật màn hình lại.
+                    try { Tv.off() } catch (e: Exception) { err = "TV: " + (e.message ?: "Không gửi được lệnh tắt") }
+                    Thread.sleep(900)
+                    try { Adb.sh("input keyevent 223") } catch (e: Exception) { err += " · Box: " + (e.message ?: "Không sleep được") }
+                } else {
+                    // Đánh thức màn hình Box trước, đợi hệ thống và Wi-Fi/ADB ổn định rồi bật TV.
+                    Adb.sh("input keyevent 224")
+                    Thread.sleep(1200)
+                    tvOn()
                 }
-            } catch (e: Exception) { err = e.message ?: "Lỗi" } finally { Thread.sleep(3000); busy = false }
+            } catch (e: Exception) {
+                err = e.message ?: "Lỗi điều khiển"
+            } finally {
+                lastCommandAt = System.currentTimeMillis()
+                Thread.sleep(1200)
+                busy = false
+            }
         }.start()
-        return if (on) "Đang bật Box → TV → ${Cfg["hdmi"].uppercase()}" else "Đang tắt TV → Box"
+        return if (wasAwake) "Đang tắt TV rồi đưa màn hình Box vào chế độ ngủ" else "Đang đánh thức Box rồi bật TV"
     }
 }
 
@@ -293,7 +319,7 @@ class BridgeService : Service() {
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("b", "TVRemote", NotificationManager.IMPORTANCE_MIN))
         val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "b") else Notification.Builder(this)
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0))
-        startForeground(1, nb.setSmallIcon(android.R.drawable.ic_menu_manage).setContentTitle("TVRemote đang chạy").setContentText("Điều khiển tại http://${myIp()}:8765").setContentIntent(open).setOngoing(true).build())
+        startForeground(1, nb.setSmallIcon(android.R.drawable.ic_menu_manage).setContentTitle("TVRemote đang chạy").setContentText("Đang chạy nền · http://${myIp()}:8765").setContentIntent(open).setOngoing(true).build())
         if (srv == null) {
             srv = Srv(this).also { try { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) } catch (e: Exception) {} }
             wl = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "tvremote:srv").also { if (!it.isHeld) it.acquire() }
@@ -301,10 +327,10 @@ class BridgeService : Service() {
             screenReceiver = object : BroadcastReceiver() {
                 override fun onReceive(c: Context, it: Intent) {
                     val now = System.currentTimeMillis()
-                    if (Cfg["follow"] != "1" || Scene.busy || now - last < 3000) return
+                    if (Cfg["follow"] != "1" || Scene.busy || now - last < 3000 || now - Scene.lastCommandAt < 10000) return
                     last = now
                     val on = it.action == Intent.ACTION_SCREEN_ON
-                    Thread { try { if (on) Scene.tvOn() else Tv.off() } catch (e: Exception) {} }.start()
+                    Thread { try { if (on) Scene.tvOn() else Tv.off() } catch (e: Exception) { Scene.err = e.message ?: "Lỗi đồng bộ TV" } }.start()
                 }
             }.also { r -> registerReceiver(r, IntentFilter().apply { addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF) }) }
             val boot = i?.getBooleanExtra("boot", false) == true

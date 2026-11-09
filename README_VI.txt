@@ -47,3 +47,12 @@ CAP NHAT v2 - CHAY NEN / POWER SONY / VOICE
    - Dia chi http://IP-BOX:8765 la HTTP noi bo, co the bi Android Chrome chan microphone SpeechRecognition.
    - Khi khong du dieu kien, TVRemote mo san o nhap va hien huong dan dung nut micro tren ban phim Android (Gboard).
    - Tren iPhone/Safari, ho tro Web Speech API co the khac nhau; neu khong co, dung micro cua ban phim iOS.
+
+
+CAP NHAT v3 - POWER BOX 2 TRANG THAI / GIU DICH VU
+- Nút nguồn đỏ: nếu màn hình Box đang sáng, TV được đưa về standby trước, sau đó Box chỉ sleep màn hình (KEYCODE_SLEEP 223). Không dùng KEYCODE_POWER dự phòng vì phím này là toggle và có thể bật màn hình lại.
+- Bấm nút đỏ lần nữa: gửi KEYCODE_WAKEUP 224 để đánh thức màn hình Box, đợi 1,2 giây rồi bật TV và chuyển HDMI đã chọn.
+- Khi TV đã standby, lệnh tắt sẽ không gửi thêm Power toggle. Khi TV đã active, mới gửi Power để tắt. Khi không đọc được trạng thái, không gửi lệnh mù để tránh bật nhầm TV đang ngủ.
+- Bỏ xử lý screen-on/off trùng trong 10 giây sau khi nút nguồn chủ động thay đổi trạng thái Box.
+- BridgeService tiếp tục chạy foreground, giữ partial wake lock và Wi-Fi lock. Nếu firmware Box tự tắt Wi-Fi khi sleep, remote qua mạng có thể tạm thời không kết nối được; cần bật chế độ sleep giữ mạng trong cài đặt Box/router nếu có.
+- Voice Search vẫn mở ứng dụng tìm kiếm đã chọn trên Box sau khi nhận được câu nói. Việc mở YouTube/SmartTube sẽ thay giao diện đang hiển thị trên Box nhưng không dừng BridgeService. Giao diện điều khiển trên điện thoại vẫn dùng được. Nếu trình duyệt không hỗ trợ SpeechRecognition hoặc đang dùng HTTP LAN, hãy dùng micro của bàn phím điện thoại để nhập câu nói vào ô tìm kiếm.
