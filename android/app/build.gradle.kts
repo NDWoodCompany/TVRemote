@@ -35,5 +35,6 @@ android {
 }
 
 dependencies {
-    implementation("dev.mobile:dadb:1.2.10")\n    implementation("androidx.core:core:1.12.0")
+    implementation("dev.mobile:dadb:1.2.10")
+    implementation("androidx.core:core:1.12.0")
 }
