@@ -18,7 +18,7 @@ CÀI ĐẶT
    TVRemote.apk nằm ở Releases > "apk-latest".
 2) Cài APK lên Box, mở 1 lần, bấm "Bỏ tối ưu pin"; cho phép tự khởi động nếu firmware có mục này.
 3) Box: bật Gỡ lỗi USB + ADB qua mạng (cổng 5555). Lần đầu TV hiện hộp thoại ADB: chọn "Luôn cho phép".
-   Box đã root thì app tự bật ADB TCP mỗi lần khởi động.
+   ADB loopback cần firmware Box đã bật ADB TCP trên localhost; APK không yêu cầu quyền root.
 4) TV Sony: bật IP Control (PSK nếu muốn), bật "Khởi động từ xa" để bật TV từ standby.
 5) Điện thoại: mở http://IP-box:8765 > Add to Home screen > tab Cài đặt: Tự tìm TV, PSK, cổng HDMI > Lưu.
 
@@ -68,10 +68,16 @@ CAP NHAT v4 - DIEU KHIEN BOX LOCAL ROOT
 - versionCode 4 / versionName 1.3.
 
 
-CAP NHAT v5 - NUT CHAY NGAM
-- Giao dien APK co nut "Chay ngam ve man hinh chinh".
-- Khi bam nut: goi BridgeService.start() de dam bao foreground service dang duoc yeu cau chay, sau do mo HOME launcher. APK khong goi stopSelf va khong dung HTTP server.
-- Nut Back van dua task ve nen nhu truoc.
-- Foreground service tiep tuc hien thong bao "TVRemote dang chay"; tu thong bao co the mo lai APK.
-- Android khong the bao dam app luon song trong moi truong hop: Force stop, thu hoi quyen root, firmware diet tien trinh, reboot/het pin hoac tat nguon co the dung service. De tang do ben, cho phep chay tu dong, bo toi uu pin va khong Force stop.
-- versionCode 5 / versionName 1.4.
+CAP NHAT v6 - ADB KHONG ROOT / QUYEN CHAY NEN / UPDATE TRONG APK
+- Loai bo toan bo lenh `su`; firmware tu choi su khong con gay loi.
+- Dieu khien Box quay lai Dadb/ADB loopback 127.0.0.1:5555. Box phai co ADB qua mang tren localhost hoat dong; neu khong, app hien loi ADB va can bat ADB TCP trong firmware.
+- Man hinh APK co nut CHAY NGAM – VE HOME, CAP QUYEN CHAY NEN, KHOI DONG LAI DICH VU, KIEM TRA ADB BOX, CAP NHAT TVREMOTE.
+- Cap quyen chay nen mo man hinh mien toi uu pin (neu Android ho tro) va trang thong tin ung dung de nguoi dung bat tu khoi dong/chay nen neu firmware co.
+- Update tai APK tu URL co dinh cua GitHub Releases do nguoi dung cung cap, dung DownloadManager; sau khi tai xong mo package installer. Nguoi dung phai cho phep cai nguon nay va xac nhan cai dat.
+- Neu Android 8+, vao Settings > Install unknown apps va cho phep TVRemote. Android 7 co the hien yeu cau Unknown sources.
+- Cap nhat chi cai de len neu APK moi cung applicationId va cung certificate ky so voi APK hien tai. Neu khac chu ky, Android se tu choi update va can go ban cu truoc (co the mat config).
+- Android khong cho tu cai im lang bang app thong thuong. Nut Update chi tai va mo trinh cai dat de nguoi dung xac nhan.
+- versionCode 6 / versionName 1.5.
+
+
+LƯU Ý BẢN 1.5: Các ghi chú "CAP NHAT v4 - LOCAL ROOT" phía trên đã lỗi thời. Bản 1.5 bỏ su hoàn toàn và quay lại ADB loopback 127.0.0.1:5555. Chỉ làm theo mục CAP NHAT v6.

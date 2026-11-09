@@ -191,10 +191,10 @@ object Scene {
                     // Không gửi KEYCODE_POWER dự phòng vì đó là phím toggle, có thể bật màn hình lại.
                     try { Tv.off() } catch (e: Exception) { err = "TV: " + (e.message ?: "Không gửi được lệnh tắt") }
                     Thread.sleep(900)
-                    try { Box.localSh("input keyevent 223") } catch (e: Exception) { err += " · Box: " + (e.message ?: "Không sleep được") }
+                    try { Adb.sh("input keyevent 223") } catch (e: Exception) { err += " · Box: " + (e.message ?: "Không sleep được") }
                 } else {
                     // Đánh thức màn hình Box trước, đợi hệ thống và Wi-Fi/ADB ổn định rồi bật TV.
-                    Box.localSh("input keyevent 224")
+                    Adb.sh("input keyevent 224")
                     Thread.sleep(1200)
                     tvOn()
                 }
@@ -232,53 +232,31 @@ object Adb {
 object Box {
     val KEY = mutableMapOf("UP" to 19, "DOWN" to 20, "LEFT" to 21, "RIGHT" to 22, "OK" to 23, "BACK" to 4, "EXIT" to 3, "HOME" to 3,
         "POWER" to 26, "VOL+" to 24, "VOL-" to 25, "MUTE" to 164, "*" to 17, "#" to 18).also { for (i in 0..9) it["$i"] = 7 + i }
-
-    // APK va Android Box la cung mot thiet bi: chay lenh local, khong ADB loopback ve 127.0.0.1.
-    @Synchronized fun localSh(cmd: String): String {
-        val p = try { Runtime.getRuntime().exec(arrayOf("su", "-c", cmd)) }
-        catch (e: Exception) { throw Exception("Không khởi chạy được su: ${e.message}") }
-        var finished = false
-        for (i in 0 until 60) {
-            try { p.exitValue(); finished = true; break } catch (_: IllegalThreadStateException) { Thread.sleep(100) }
-        }
-        if (!finished) {
-            p.destroy()
-            throw Exception("Lệnh Box quá thời gian chờ")
-        }
-        val out = p.inputStream.bufferedReader().use { it.readText() }
-        val err = p.errorStream.bufferedReader().use { it.readText() }
-        if (p.exitValue() != 0) throw Exception((err.ifBlank { out }).trim().ifBlank { "Lệnh hệ thống thất bại (mã ${p.exitValue()})" })
-        return out.trim()
-    }
-    fun key(key: String) {
-        val code = KEY[key] ?: throw Exception("Phím không hỗ trợ: $key")
-        localSh("input keyevent $code")
-    }
     private fun q(s: String) = "'" + s.replace("'", "'\\''") + "'"
     fun text(t: String, enter: Boolean) {
-        if (t.isEmpty() || t.length > 200) throw Exception("Nội dung không hợp lệ")
-        if (t.all { it.code in 32..126 }) localSh("input text " + q(t.replace(" ", "%s")))
+        if (t.all { it.code in 32..126 }) Adb.sh("input text " + q(t.replace(" ", "%s")))
         else {
             val pk = "com.android.adbkeyboard"; val ime = "$pk/.AdbIME"
-            if (!localSh("pm list packages $pk").contains(pk)) throw Exception("Gõ tiếng Việt cần cài ADBKeyboard ($pk) trên Box")
-            val prev = localSh("settings get secure default_input_method")
-            localSh("ime enable $ime; ime set $ime")
-            try { localSh("am broadcast -a ADB_INPUT_B64 --es msg " + android.util.Base64.encodeToString(t.toByteArray(), android.util.Base64.NO_WRAP)) }
-            finally { Thread.sleep(300); if (prev.isNotEmpty() && prev != "null") try { localSh("ime set $prev") } catch (_: Exception) {} }
+            if (!Adb.sh("pm list packages $pk").contains(pk)) throw Exception("Gõ tiếng Việt cần cài ADBKeyboard ($pk) trên Box")
+            val prev = Adb.sh("settings get secure default_input_method")
+            Adb.sh("ime enable $ime;ime set $ime")
+            try { Adb.sh("am broadcast -a ADB_INPUT_B64 --es msg " + android.util.Base64.encodeToString(t.toByteArray(), android.util.Base64.NO_WRAP)) }
+            finally { Thread.sleep(300); if (prev.isNotEmpty() && prev != "null") try { Adb.sh("ime set $prev") } catch (e: Exception) {} }
         }
-        if (enter) localSh("input keyevent 66")
+        if (enter) Adb.sh("input keyevent 66")
     }
     fun search(qs: String) {
         val app = Cfg["searchApp"]
-        val o = localSh("am start -a android.intent.action.VIEW -d " + q("https://www.youtube.com/results?search_query=" + URLEncoder.encode(qs, "UTF-8")) + (if (app.isNotEmpty()) " -p $app" else ""))
+        val o = Adb.sh("am start -a android.intent.action.VIEW -d " + q("https://www.youtube.com/results?search_query=" + URLEncoder.encode(qs, "UTF-8")) + (if (app.isNotEmpty()) " -p $app" else ""))
         if (o.contains("Error")) throw Exception(o.lines().first { it.contains("Error") } + " (app chưa cài hoặc không hỗ trợ link tìm kiếm)")
     }
     fun open() {
         val p = Cfg["searchApp"].ifEmpty { "com.google.android.youtube.tv" }
-        fun a(c: String) = localSh("am start -a android.intent.action.MAIN -c android.intent.category.$c -p $p")
+        fun a(c: String) = Adb.sh("am start -a android.intent.action.MAIN -c android.intent.category.$c -p $p")
         var o = a("LEANBACK_LAUNCHER"); if (o.contains("Error")) o = a("LAUNCHER")
         if (o.contains("Error")) throw Exception("Không mở được $p")
     }
+    fun key(key: String) { val code = KEY[key] ?: throw Exception("Phím không hỗ trợ: $key"); Adb.sh("input keyevent $code") }
 }
 
 // ---------- HTTP: phục vụ giao diện + API (cùng giao thức với bridge/server.js) ----------
@@ -323,7 +301,7 @@ class Srv(private val ctx: Context) : NanoHTTPD(8765) {
         "/api/scene" -> js(JSONObject().put("ok", true).put("msg", Scene.toggle(ctx)))
         "/api/discover" -> { val r = Disc.ensure(true); js(JSONObject().put("ok", true).put("result", r)) }
         "/api/status" -> js(JSONObject().put("ok", true).put("sony", Tv.diag()).put("scene", Scene.err)
-            .put("box", try { "OK · " + Box.localSh("getprop ro.product.model") } catch (e: Exception) { "Lỗi: " + e.message }))
+            .put("box", try { "OK · " + Adb.sh("getprop ro.product.model") } catch (e: Exception) { "Lỗi: " + e.message }))
         else -> throw Exception("API không tồn tại")
     }
 }
@@ -360,7 +338,6 @@ class BridgeService : Service() {
             Thread {
                 try { Disc.ensure() } catch (e: Exception) {}
                 if (boot) {
-                    try { Runtime.getRuntime().exec(arrayOf("su", "-c", "setprop service.adb.tcp.port 5555;stop adbd;start adbd")).waitFor() } catch (e: Exception) {}
                     if (Cfg["follow"] == "1") try { Scene.tvOn() } catch (e: Exception) {}
                 }
             }.start()
@@ -394,29 +371,125 @@ class BootReceiver : BroadcastReceiver() {
 }
 
 class MainActivity : Activity() {
-    private lateinit var t: TextView
+    private lateinit var info: TextView
+    private var downloadManager: DownloadManager? = null
+    private var downloadId = -1L
+    private var pendingInstall: Uri? = null
+    private var downloadReceiver: BroadcastReceiver? = null
+    private val apkUrl = "https://github.com/NDWoodCompany/TVRemote/releases/download/apk-latest/TVRemote.apk"
+
     override fun onCreate(b: Bundle?) {
-        super.onCreate(b); Cfg.init(this)
-        val l = LinearLayout(this); l.orientation = LinearLayout.VERTICAL; l.setPadding(48, 48, 48, 48)
-        t = TextView(this); t.textSize = 20f; l.addView(t)
+        super.onCreate(b)
+        Cfg.init(this)
+        Adb.dir = filesDir
+        downloadManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+        val l = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(36, 32, 36, 32) }
+        info = TextView(this).apply { textSize = 17f }
+        l.addView(info)
         fun btn(s: String, f: () -> Unit) { val x = Button(this); x.text = s; x.setOnClickListener { f() }; l.addView(x) }
-        btn("Chạy ngầm về màn hình chính") {
+        btn("CHẠY NGẦM – VỀ HOME") {
             BridgeService.start(this)
-            try {
-                val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(home)
-            } catch (e: Exception) {
-                moveTaskToBack(true)
+            startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        btn("CẤP QUYỀN CHẠY NỀN") { openBackgroundSettings() }
+        btn("KHỞI ĐỘNG LẠI DỊCH VỤ") { BridgeService.start(this); toast("Đã yêu cầu khởi động dịch vụ") }
+        btn("KIỂM TRA ADB BOX") {
+            Thread {
+                val msg = try { "ADB OK · " + Adb.sh("getprop ro.product.model") }
+                catch (e: Exception) { "ADB chưa kết nối: " + (e.message ?: "") }
+                runOnUiThread { info.text = msg }
+            }.start()
+        }
+        btn("CẬP NHẬT TVREMOTE") { confirmUpdate() }
+        info.text = "TVRemote đang chạy.\nĐịa chỉ điều khiển: http://${myIp()}:8765\n\nChạy ngầm: đưa giao diện về HOME, dịch vụ tiếp tục chạy.\nCập nhật: tải APK từ GitHub rồi mở trình cài đặt để bạn xác nhận."
+        setContentView(l)
+        BridgeService.start(this)
+        downloadReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, i: Intent?) {
+                if (i?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+                val id = i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                if (id == downloadId) handleDownloadComplete(id)
             }
         }
-        btn("Khởi động lại dịch vụ") { BridgeService.start(this) }
-        btn("Bỏ tối ưu pin (nên bấm)") {
-            if (Build.VERSION.SDK_INT >= 23) try { startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))) }
-            catch (e: Exception) { t.append("\nBox không có mục này") }
-        }
-        setContentView(l); BridgeService.start(this)
+        registerReceiver(downloadReceiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
     }
-    override fun onResume() { super.onResume(); t.text = "TVRemote đang chạy nền.\nMở trên điện thoại (cùng Wi-Fi):\nhttp://${myIp()}:8765\n\nDùng nút Chạy ngầm về màn hình chính để ẩn giao diện; dịch vụ vẫn chạy." }
+
+    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
+
+    private fun openBackgroundSettings() {
+        BridgeService.start(this)
+        if (Build.VERSION.SDK_INT >= 23) {
+            try {
+                val pm = getSystemService(POWER_SERVICE) as PowerManager
+                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                    return
+                }
+            } catch (_: Exception) {}
+        }
+        try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
+        catch (_: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+        toast("Cho phép chạy nền/tự khởi động và bỏ giới hạn pin nếu firmware có các mục này.")
+    }
+
+    private fun confirmUpdate() {
+        AlertDialog.Builder(this).setTitle("Cập nhật TVRemote")
+            .setMessage("Tải APK mới nhất từ GitHub Releases? Khi tải xong, Android sẽ mở trình cài đặt để bạn xác nhận.")
+            .setNegativeButton("Hủy", null)
+            .setPositiveButton("Tải cập nhật") { _, _ -> startUpdateDownload() }.show()
+    }
+
+    private fun startUpdateDownload() {
+        try {
+            val req = DownloadManager.Request(Uri.parse(apkUrl))
+                .setTitle("TVRemote – cập nhật").setDescription("Đang tải APK mới nhất từ GitHub")
+                .setMimeType("application/vnd.android.package-archive")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setAllowedOverMetered(true).setAllowedOverRoaming(false)
+                .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "TVRemote-update.apk")
+            downloadId = downloadManager!!.enqueue(req)
+            toast("Đã bắt đầu tải APK. Có thể tiếp tục sử dụng Box.")
+        } catch (e: Exception) { toast("Không thể tải cập nhật: ${e.message}") }
+    }
+
+    private fun handleDownloadComplete(id: Long) {
+        try {
+            val c = downloadManager!!.query(DownloadManager.Query().setFilterById(id)) ?: throw Exception("Không đọc được trạng thái tải")
+            c.use {
+                if (!it.moveToFirst()) throw Exception("Không tìm thấy file tải")
+                val status = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                if (status != DownloadManager.STATUS_SUCCESSFUL) {
+                    val reason = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                    throw Exception("Tải thất bại (mã $reason)")
+                }
+            }
+            pendingInstall = downloadManager!!.getUriForDownloadedFile(id) ?: throw Exception("Không lấy được URI APK")
+            launchInstallerIfAllowed()
+        } catch (e: Exception) { toast("Cập nhật lỗi: ${e.message}") }
+    }
+
+    private fun launchInstallerIfAllowed() {
+        val uri = pendingInstall ?: return
+        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+                toast("Bật Cho phép cài ứng dụng từ nguồn này rồi quay lại TVRemote.")
+            } catch (_: Exception) { toast("Hãy bật quyền cài ứng dụng không rõ nguồn trong Cài đặt Android.") }
+            return
+        }
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            pendingInstall = null
+        } catch (e: Exception) { toast("Không mở được trình cài đặt: ${e.message}") }
+    }
+
+    override fun onResume() { super.onResume(); if (pendingInstall != null) launchInstallerIfAllowed() }
+    override fun onDestroy() {
+        try { downloadReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
+        downloadReceiver = null
+        super.onDestroy()
+    }
     @Suppress("DEPRECATION")
     override fun onBackPressed() { moveTaskToBack(true) }
 }
