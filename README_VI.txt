@@ -56,3 +56,22 @@ CAP NHAT v3 - POWER BOX 2 TRANG THAI / GIU DICH VU
 - Bỏ xử lý screen-on/off trùng trong 10 giây sau khi nút nguồn chủ động thay đổi trạng thái Box.
 - BridgeService tiếp tục chạy foreground, giữ partial wake lock và Wi-Fi lock. Nếu firmware Box tự tắt Wi-Fi khi sleep, remote qua mạng có thể tạm thời không kết nối được; cần bật chế độ sleep giữ mạng trong cài đặt Box/router nếu có.
 - Voice Search vẫn mở ứng dụng tìm kiếm đã chọn trên Box sau khi nhận được câu nói. Việc mở YouTube/SmartTube sẽ thay giao diện đang hiển thị trên Box nhưng không dừng BridgeService. Giao diện điều khiển trên điện thoại vẫn dùng được. Nếu trình duyệt không hỗ trợ SpeechRecognition hoặc đang dùng HTTP LAN, hãy dùng micro của bàn phím điện thoại để nhập câu nói vào ô tìm kiếm.
+
+
+CAP NHAT v4 - DIEU KHIEN BOX LOCAL ROOT
+- Khong dung Dadb/ADB ket noi nguoc ve 127.0.0.1:5555 de dieu khien chinh Android Box nua.
+- Cac nut phim, volume, power, go text, voice search va scene sleep/wakeup chay lenh local bang `su -c` tren chinh Box.
+- Muc dich: tranh ADB loopback lam roi/ket thuc process TVRemote khi Box tu nhan key event hoac mo ung dung khac.
+- Tat ca API Box bat Exception va tra JSON loi thay vi de loi vuot ra HTTP server.
+- Firmware can cap quyen root cho TVRemote. Neu `su` khong cap quyen, xem hop thoai xin quyen root va chon Allow/Grant. Khong can bat ADB TCP cho cac lenh local nua.
+- Nut HOME/BACK co the dua Activity giao dien ra nen theo hanh vi Android; BridgeService foreground van tiep tuc. Lenh POWER va SLEEP co the lam man hinh Box tat, nhung dich vu nen can con song.
+- versionCode 4 / versionName 1.3.
+
+
+CAP NHAT v5 - NUT CHAY NGAM
+- Giao dien APK co nut "Chay ngam ve man hinh chinh".
+- Khi bam nut: goi BridgeService.start() de dam bao foreground service dang duoc yeu cau chay, sau do mo HOME launcher. APK khong goi stopSelf va khong dung HTTP server.
+- Nut Back van dua task ve nen nhu truoc.
+- Foreground service tiep tuc hien thong bao "TVRemote dang chay"; tu thong bao co the mo lai APK.
+- Android khong the bao dam app luon song trong moi truong hop: Force stop, thu hoi quyen root, firmware diet tien trinh, reboot/het pin hoac tat nguon co the dung service. De tang do ben, cho phep chay tu dong, bo toi uu pin va khong Force stop.
+- versionCode 5 / versionName 1.4.

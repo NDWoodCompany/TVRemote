@@ -191,10 +191,10 @@ object Scene {
                     // Không gửi KEYCODE_POWER dự phòng vì đó là phím toggle, có thể bật màn hình lại.
                     try { Tv.off() } catch (e: Exception) { err = "TV: " + (e.message ?: "Không gửi được lệnh tắt") }
                     Thread.sleep(900)
-                    try { Adb.sh("input keyevent 223") } catch (e: Exception) { err += " · Box: " + (e.message ?: "Không sleep được") }
+                    try { Box.localSh("input keyevent 223") } catch (e: Exception) { err += " · Box: " + (e.message ?: "Không sleep được") }
                 } else {
                     // Đánh thức màn hình Box trước, đợi hệ thống và Wi-Fi/ADB ổn định rồi bật TV.
-                    Adb.sh("input keyevent 224")
+                    Box.localSh("input keyevent 224")
                     Thread.sleep(1200)
                     tvOn()
                 }
@@ -232,27 +232,50 @@ object Adb {
 object Box {
     val KEY = mutableMapOf("UP" to 19, "DOWN" to 20, "LEFT" to 21, "RIGHT" to 22, "OK" to 23, "BACK" to 4, "EXIT" to 3, "HOME" to 3,
         "POWER" to 26, "VOL+" to 24, "VOL-" to 25, "MUTE" to 164, "*" to 17, "#" to 18).also { for (i in 0..9) it["$i"] = 7 + i }
+
+    // APK va Android Box la cung mot thiet bi: chay lenh local, khong ADB loopback ve 127.0.0.1.
+    @Synchronized fun localSh(cmd: String): String {
+        val p = try { Runtime.getRuntime().exec(arrayOf("su", "-c", cmd)) }
+        catch (e: Exception) { throw Exception("Không khởi chạy được su: ${e.message}") }
+        var finished = false
+        for (i in 0 until 60) {
+            try { p.exitValue(); finished = true; break } catch (_: IllegalThreadStateException) { Thread.sleep(100) }
+        }
+        if (!finished) {
+            p.destroy()
+            throw Exception("Lệnh Box quá thời gian chờ")
+        }
+        val out = p.inputStream.bufferedReader().use { it.readText() }
+        val err = p.errorStream.bufferedReader().use { it.readText() }
+        if (p.exitValue() != 0) throw Exception((err.ifBlank { out }).trim().ifBlank { "Lệnh hệ thống thất bại (mã ${p.exitValue()})" })
+        return out.trim()
+    }
+    fun key(key: String) {
+        val code = KEY[key] ?: throw Exception("Phím không hỗ trợ: $key")
+        localSh("input keyevent $code")
+    }
     private fun q(s: String) = "'" + s.replace("'", "'\\''") + "'"
     fun text(t: String, enter: Boolean) {
-        if (t.all { it.code in 32..126 }) Adb.sh("input text " + q(t.replace(" ", "%s")))
+        if (t.isEmpty() || t.length > 200) throw Exception("Nội dung không hợp lệ")
+        if (t.all { it.code in 32..126 }) localSh("input text " + q(t.replace(" ", "%s")))
         else {
             val pk = "com.android.adbkeyboard"; val ime = "$pk/.AdbIME"
-            if (!Adb.sh("pm list packages $pk").contains(pk)) throw Exception("Gõ tiếng Việt cần cài ADBKeyboard ($pk) trên Box")
-            val prev = Adb.sh("settings get secure default_input_method")
-            Adb.sh("ime enable $ime;ime set $ime")
-            try { Adb.sh("am broadcast -a ADB_INPUT_B64 --es msg " + android.util.Base64.encodeToString(t.toByteArray(), android.util.Base64.NO_WRAP)) }
-            finally { Thread.sleep(300); if (prev.isNotEmpty() && prev != "null") try { Adb.sh("ime set $prev") } catch (e: Exception) {} }
+            if (!localSh("pm list packages $pk").contains(pk)) throw Exception("Gõ tiếng Việt cần cài ADBKeyboard ($pk) trên Box")
+            val prev = localSh("settings get secure default_input_method")
+            localSh("ime enable $ime; ime set $ime")
+            try { localSh("am broadcast -a ADB_INPUT_B64 --es msg " + android.util.Base64.encodeToString(t.toByteArray(), android.util.Base64.NO_WRAP)) }
+            finally { Thread.sleep(300); if (prev.isNotEmpty() && prev != "null") try { localSh("ime set $prev") } catch (_: Exception) {} }
         }
-        if (enter) Adb.sh("input keyevent 66")
+        if (enter) localSh("input keyevent 66")
     }
     fun search(qs: String) {
         val app = Cfg["searchApp"]
-        val o = Adb.sh("am start -a android.intent.action.VIEW -d " + q("https://www.youtube.com/results?search_query=" + URLEncoder.encode(qs, "UTF-8")) + (if (app.isNotEmpty()) " -p $app" else ""))
+        val o = localSh("am start -a android.intent.action.VIEW -d " + q("https://www.youtube.com/results?search_query=" + URLEncoder.encode(qs, "UTF-8")) + (if (app.isNotEmpty()) " -p $app" else ""))
         if (o.contains("Error")) throw Exception(o.lines().first { it.contains("Error") } + " (app chưa cài hoặc không hỗ trợ link tìm kiếm)")
     }
     fun open() {
         val p = Cfg["searchApp"].ifEmpty { "com.google.android.youtube.tv" }
-        fun a(c: String) = Adb.sh("am start -a android.intent.action.MAIN -c android.intent.category.$c -p $p")
+        fun a(c: String) = localSh("am start -a android.intent.action.MAIN -c android.intent.category.$c -p $p")
         var o = a("LEANBACK_LAUNCHER"); if (o.contains("Error")) o = a("LAUNCHER")
         if (o.contains("Error")) throw Exception("Không mở được $p")
     }
@@ -290,17 +313,17 @@ class Srv(private val ctx: Context) : NanoHTTPD(8765) {
             if (b.optString("psk").isNotEmpty()) Cfg["psk"] = b.getString("psk")
             if (b.optString("adbPort").toIntOrNull() != null) Cfg["adbPort"] = b.getString("adbPort")
             if (b.optString("hdmi") in listOf("tv", "hdmi1", "hdmi2", "hdmi3", "hdmi4")) Cfg["hdmi"] = b.getString("hdmi")
-            Adb.reset(); ok()
+            ok()
         }
         "/api/sony" -> { val c = b.optString("cmd"); if (c == "power") Tv.power() else Tv.ircc(Tv.codes[c] ?: throw Exception("Lệnh TV không hỗ trợ")); ok() }
-        "/api/box" -> { Adb.sh("input keyevent " + (Box.KEY[b.optString("key")] ?: throw Exception("Phím không hỗ trợ"))); ok() }
+        "/api/box" -> { Box.key(b.optString("key")); ok() }
         "/api/box/text" -> { val t = b.optString("text"); if (t.isEmpty() || t.length > 200) throw Exception("Nội dung không hợp lệ"); Box.text(t, b.optBoolean("enter")); ok() }
         "/api/box/search" -> { val q = b.optString("q").trim(); if (q.isEmpty()) throw Exception("Thiếu nội dung"); Box.search(q.take(200)); ok() }
         "/api/box/open" -> { Box.open(); ok() }
         "/api/scene" -> js(JSONObject().put("ok", true).put("msg", Scene.toggle(ctx)))
         "/api/discover" -> { val r = Disc.ensure(true); js(JSONObject().put("ok", true).put("result", r)) }
         "/api/status" -> js(JSONObject().put("ok", true).put("sony", Tv.diag()).put("scene", Scene.err)
-            .put("box", try { "OK · " + Adb.sh("getprop ro.product.model") } catch (e: Exception) { "Lỗi: " + e.message }))
+            .put("box", try { "OK · " + Box.localSh("getprop ro.product.model") } catch (e: Exception) { "Lỗi: " + e.message }))
         else -> throw Exception("API không tồn tại")
     }
 }
@@ -377,6 +400,15 @@ class MainActivity : Activity() {
         val l = LinearLayout(this); l.orientation = LinearLayout.VERTICAL; l.setPadding(48, 48, 48, 48)
         t = TextView(this); t.textSize = 20f; l.addView(t)
         fun btn(s: String, f: () -> Unit) { val x = Button(this); x.text = s; x.setOnClickListener { f() }; l.addView(x) }
+        btn("Chạy ngầm về màn hình chính") {
+            BridgeService.start(this)
+            try {
+                val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(home)
+            } catch (e: Exception) {
+                moveTaskToBack(true)
+            }
+        }
         btn("Khởi động lại dịch vụ") { BridgeService.start(this) }
         btn("Bỏ tối ưu pin (nên bấm)") {
             if (Build.VERSION.SDK_INT >= 23) try { startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))) }
@@ -384,7 +416,7 @@ class MainActivity : Activity() {
         }
         setContentView(l); BridgeService.start(this)
     }
-    override fun onResume() { super.onResume(); t.text = "TVRemote đang chạy nền.\nMở trên điện thoại (cùng Wi-Fi):\nhttp://${myIp()}:8765\n\nBấm Back để thu nhỏ; dịch vụ vẫn chạy." }
+    override fun onResume() { super.onResume(); t.text = "TVRemote đang chạy nền.\nMở trên điện thoại (cùng Wi-Fi):\nhttp://${myIp()}:8765\n\nDùng nút Chạy ngầm về màn hình chính để ẩn giao diện; dịch vụ vẫn chạy." }
     @Suppress("DEPRECATION")
     override fun onBackPressed() { moveTaskToBack(true) }
 }
