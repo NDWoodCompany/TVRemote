@@ -1,0 +1,12 @@
+Project: TVRemote Native
+Version: 2.2.0
+Application ID: com.ndwood.tvremote
+Min SDK: 21
+Target SDK: 28
+Compile SDK: 34
+JDK: 17
+Gradle: 8.7
+Android Gradle Plugin: 8.2.2
+Kotlin: 1.9.22
+Dependency: dev.mobile:dadb:1.2.10
+Build task: :app:assembleDebug
