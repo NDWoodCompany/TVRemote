@@ -413,16 +413,17 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var tabArea: LinearLayout
     private var selectedTab = 0
-    private val commandExecutor = Executors.newSingleThreadExecutor()
+    private val tvExecutor = Executors.newSingleThreadExecutor()
+    private val boxExecutor = Executors.newSingleThreadExecutor()
     private val bg = 0xFF101820.toInt(); private val panel = 0xFF1D2A35.toInt(); private val fg = 0xFFF1F5F8.toInt()
     override fun onCreate(b: Bundle?) { super.onCreate(b); Cfg.init(this); Adb.dir = filesDir; buildUi() }
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
     private fun label(t: String, size: Float = 15f) = TextView(this).apply { text=t; textSize=size; setTextColor(fg); gravity=Gravity.CENTER; setPadding(dp(6),dp(8),dp(6),dp(8)) }
-    private fun button(t: String, action: () -> Unit): Button = Button(this).apply { text=t; isAllCaps=false; textSize=15f; setTextColor(fg); setBackgroundTintList(android.content.res.ColorStateList.valueOf(panel)); setOnClickListener { action() } }
-    private fun row(parent: LinearLayout, vararg items: Pair<String, () -> Unit>) { val r=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER; weightSum=items.size.toFloat() }; items.forEach { (t,a) -> r.addView(button(t,a), LinearLayout.LayoutParams(0,dp(58),1f).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) }) }; parent.addView(r) }
-    private fun action(name: String, block: () -> Any?) {
+    private fun button(t: String, action: () -> Unit): Button = Button(this).apply { text=t; isAllCaps=false; textSize=13f; minHeight=0; minimumHeight=0; setTextColor(fg); setPadding(dp(2),0,dp(2),0); setBackgroundTintList(android.content.res.ColorStateList.valueOf(panel)); setOnClickListener { action() } }
+    private fun row(parent: LinearLayout, vararg items: Pair<String, () -> Unit>) { val r=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER; weightSum=items.size.toFloat() }; items.forEach { (t,a) -> r.addView(button(t,a), LinearLayout.LayoutParams(0,dp(50),1f).apply { setMargins(dp(3),dp(2),dp(3),dp(2)) }) }; parent.addView(r) }
+    private fun action(name: String, target: String = "box", block: () -> Any?) {
         status.text = "Đang thực hiện: $name…"
-        commandExecutor.execute {
+        (if (target == "tv") tvExecutor else boxExecutor).execute {
             val result = try {
                 val value = block()
                 if (value == null || value === Unit || value.toString().isBlank()) "Đã gửi: $name" else value.toString()
@@ -437,24 +438,21 @@ class MainActivity : Activity() {
         root.addView(head); status=label("Sẵn sàng điều khiển",12f).apply { gravity=Gravity.START; setBackgroundColor(panel) }; root.addView(status)
         val tabs=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL }; listOf("ĐIỀU KHIỂN","BÀN PHÍM","CÀI ĐẶT").forEachIndexed { i,t -> tabs.addView(button(t) { selectedTab=i; renderTab() },LinearLayout.LayoutParams(0,dp(48),1f)) }; root.addView(tabs)
         tabArea=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; gravity=Gravity.CENTER_HORIZONTAL; setPadding(0,dp(8),0,dp(12)) }
-        val scroll=ScrollView(this).apply { isFillViewport=true; addView(tabArea) }
-        root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
+        root.addView(tabArea,LinearLayout.LayoutParams(-1,0,1f))
         setContentView(root); renderTab(); refreshStatus()
     }
     private fun renderTab() { tabArea.removeAllViews(); when(selectedTab) {
         0 -> {
-            row(tabArea,"⏻ NGUỒN TV + BOX" to { action("Nguồn TV + Box") { Scene.toggle(this) } })
-            row(tabArea,"⏻ TV NGUỒN" to { action("TV Power") { Tv.power() } })
-            row(tabArea,"HDMI 1 ⇄ 2" to { action("Chuyển HDMI") { Tv.toggleHdmi() } })
-            row(tabArea,"TV VOL +" to { action("TV Vol+") { Tv.ircc(Tv.codes["volUp"]!!) } },"TV VOL −" to { action("TV Vol-") { Tv.ircc(Tv.codes["volDown"]!!) } },"TV MUTE" to { action("TV Mute") { Tv.ircc(Tv.codes["mute"]!!) } })
-            row(tabArea,"BOX VOL +" to { action("Box Vol+") { Box.key("VOL+") } },"BOX VOL −" to { action("Box Vol-") { Box.key("VOL-") } },"BOX MUTE" to { action("Box Mute") { Box.key("MUTE") } })
-            row(tabArea,"BACK" to { action("Back") { Box.key("BACK") } },"HOME" to { action("Home") { Box.key("HOME") } },"EXIT" to { action("Exit") { Box.key("EXIT") } })
+            row(tabArea,"⏻\nTV" to { action("Nguồn TV","tv") { Tv.power() } },"▣\nATV" to { action("Nguồn Android TV Box") { if (Box.isAwake()) { Box.sleep(); "Đã gửi lệnh ngủ cho TV Box" } else { Box.wake(); "Đã đánh thức TV Box" } } },"⇄\nHDMI" to { action("Chuyển HDMI","tv") { Tv.toggleHdmi() } })
+            row(tabArea,"TV  VOL +" to { action("TV Vol+","tv") { Tv.ircc(Tv.codes["volUp"]!!) } },"TV  VOL −" to { action("TV Vol−","tv") { Tv.ircc(Tv.codes["volDown"]!!) } },"TV  MUTE" to { action("TV Mute","tv") { Tv.ircc(Tv.codes["mute"]!!) } })
+            row(tabArea,"BOX  VOL +" to { action("Box Vol+") { Box.key("VOL+") } },"BOX  VOL −" to { action("Box Vol−") { Box.key("VOL-") } },"BOX  MUTE" to { action("Box Mute") { Box.key("MUTE") } })
+            row(tabArea,"↶\nBACK" to { action("Back") { Box.key("BACK") } },"⌂\nHOME" to { action("Home") { Box.key("HOME") } },"⤴\nEXIT" to { action("Exit") { Box.key("EXIT") } })
             val pad=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; gravity=Gravity.CENTER }
             row(pad,"▲" to { action("Up") { Box.key("UP") } })
-            row(pad,"◀" to { action("Left") { Box.key("LEFT") } },"OK" to { action("OK") { Box.key("OK") } },"▶" to { action("Right") { Box.key("RIGHT") } })
+            row(pad,"◀" to { action("Left") { Box.key("LEFT") } },"●  OK" to { action("OK") { Box.key("OK") } },"▶" to { action("Right") { Box.key("RIGHT") } })
             row(pad,"▼" to { action("Down") { Box.key("DOWN") } })
             tabArea.addView(pad)
-            row(tabArea,"MỞ YOUTUBE" to { action("Mở YouTube") { Box.open() } },"🎙 GIỌNG NÓI" to { voice() })
+            row(tabArea,"▶  YOUTUBE" to { action("Mở YouTube") { Box.open() } },"🎙  GIỌNG NÓI" to { voice() })
         }
         1 -> { row(tabArea,"1" to { sendKey("1") },"2" to { sendKey("2") },"3" to { sendKey("3") }); row(tabArea,"4" to { sendKey("4") },"5" to { sendKey("5") },"6" to { sendKey("6") }); row(tabArea,"7" to { sendKey("7") },"8" to { sendKey("8") },"9" to { sendKey("9") }); row(tabArea,"*" to { sendKey("*") },"0" to { sendKey("0") },"#" to { sendKey("#") }); row(tabArea,"CH +" to { action("Channel+") { Box.key("UP") } },"CH −" to { action("Channel-") { Box.key("DOWN") } }) }
         else -> settingsUi()
@@ -566,5 +564,5 @@ class MainActivity : Activity() {
     override fun onActivityResult(req:Int,res:Int,data:Intent?) { super.onActivityResult(req,res,data); if(req==41 && res==RESULT_OK) { val q=data?.getStringArrayListExtra("android.speech.extra.RESULTS")?.firstOrNull().orEmpty(); if(q.isNotBlank()) action("Tìm kiếm: $q") { Box.search(q) } } }
     override fun onResume() { super.onResume(); if(::status.isInitialized) refreshStatus() }
     override fun onBackPressed() { finish() }
-    override fun onDestroy() { commandExecutor.shutdownNow(); Adb.reset(); super.onDestroy() }
+    override fun onDestroy() { tvExecutor.shutdownNow(); boxExecutor.shutdownNow(); Adb.reset(); super.onDestroy() }
 }
