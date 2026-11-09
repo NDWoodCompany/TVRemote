@@ -2,8 +2,7 @@ name: Build TVRemote Native APK
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -11,24 +10,20 @@ permissions:
 
 jobs:
   build:
-    name: Build native Android APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - name: Set up Gradle 8.7
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.7'
-
-      - name: Verify native project files
+      - name: Verify Android project
         shell: bash
         run: |
           test -f android/settings.gradle.kts
@@ -36,23 +31,22 @@ jobs:
           test -f android/app/build.gradle.kts
           test -f android/app/src/main/AndroidManifest.xml
           test -f android/app/src/main/kotlin/com/ndwood/tvremote/Main.kt
-
-      - name: Build debug APK
+      - name: Build native APK
         run: gradle -p android :app:assembleDebug --no-daemon
-
+      - name: Rename APK to stable update filename
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk TVRemote.apk
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TVRemote-native-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: TVRemote
+          path: TVRemote.apk
           if-no-files-found: error
           retention-days: 14
-
-      - name: Publish latest APK release
+      - name: Publish latest APK
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-latest
-          name: TVRemote Native APK - Latest
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          name: TVRemote latest
+          files: TVRemote.apk
           fail_on_unmatched_files: true
