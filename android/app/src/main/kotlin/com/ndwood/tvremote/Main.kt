@@ -14,12 +14,14 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.*
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 
 object Cfg {
     lateinit var sp: SharedPreferences
     fun init(c: Context) { if (!::sp.isInitialized) sp = c.getSharedPreferences("cfg", 0) }
-    private val def = mapOf("sonyIp" to "192.168.1.234", "psk" to "", "tvMac" to "", "boxIp" to "127.0.0.1",
-        "adbPort" to "5555", "searchApp" to "com.teamsmart.videomanager.tv", "follow" to "1")
+    private val def = mapOf("sonyIp" to "", "psk" to "", "tvMac" to "", "boxIp" to "127.0.0.1",
+        "adbPort" to "5555", "searchApp" to "com.teamsmart.videomanager.tv", "follow" to "1", "hdmi" to "hdmi2")
     val keys: Set<String> get() = def.keys
     operator fun get(k: String): String = sp.getString(k, def[k] ?: "") ?: ""
     operator fun set(k: String, v: String) { sp.edit().putString(k, v).apply() }
@@ -37,8 +39,11 @@ object Tv {
         "volUp" to ir(18), "volDown" to ir(19), "mute" to ir(20), "chUp" to ir(16), "chDown" to ir(17),
         "hdmi1" to "AAAAAgAAABoAAABaAw==", "hdmi2" to "AAAAAgAAABoAAABbAw==",
         "hdmi3" to "AAAAAgAAABoAAABcAw==", "hdmi4" to "AAAAAgAAABoAAABdAw==").also { for (i in 0..9) it["num$i"] = ir((i + 9) % 10) }
+    const val PS = """{"method":"getPowerStatus","id":1,"params":[],"version":"1.0"}"""
 
-    private fun http(path: String, body: String, h: Map<String, String>): String {
+    fun http(path: String, body: String, h: Map<String, String>): String {
+        if (Cfg["sonyIp"].isEmpty()) Disc.ensure()
+        if (Cfg["sonyIp"].isEmpty()) throw Exception("Chưa tìm thấy TV – bấm \"Tự tìm TV\" hoặc nhập IP trong Cài đặt")
         val c = URL("http://${Cfg["sonyIp"]}$path").openConnection() as HttpURLConnection
         c.connectTimeout = 4000; c.readTimeout = 4000; c.requestMethod = "POST"; c.doOutput = true
         if (Cfg["psk"].isNotEmpty()) c.setRequestProperty("X-Auth-PSK", Cfg["psk"])
@@ -49,12 +54,18 @@ object Tv {
         if (code >= 400) throw Exception("TV trả HTTP $code" + if (code == 403) " – sai/thiếu PSK hoặc chưa bật IP Control" else "")
         return txt
     }
-    fun ircc(code: String) {
+    private fun send(code: String) {
         val b = """<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:X_SendIRCC xmlns:u="urn:schemas-sony-com:service:IRCC:1"><IRCCCode>$code</IRCCCode></u:X_SendIRCC></s:Body></s:Envelope>"""
         http("/sony/IRCC", b, mapOf("Content-Type" to "text/xml; charset=UTF-8", "SOAPAction" to "\"urn:schemas-sony-com:service:IRCC:1#X_SendIRCC\""))
     }
-    private const val PS = """{"method":"getPowerStatus","id":1,"params":[],"version":"1.0"}"""
-    private fun status(): String = try {
+    // Gửi lệnh; nếu không tới được TV thì kiểm tra/quét lại IP rồi thử 1 lần nữa
+    fun ircc(code: String) {
+        try { send(code) } catch (e: Exception) {
+            val r = Disc.ensure()
+            if (r == "moved" || r == "found") send(code) else throw e
+        }
+    }
+    fun status(): String = try {
         JSONObject(http("/sony/system", PS, mapOf("Content-Type" to "application/json"))).optJSONArray("result")?.optJSONObject(0)?.optString("status") ?: ""
     } catch (e: Exception) { "" }
     fun diag(): String = try { "OK · " + http("/sony/system", PS, mapOf("Content-Type" to "application/json")) } catch (e: Exception) { "Không kết nối được (${e.message})" }
@@ -76,6 +87,93 @@ object Tv {
     }
     fun on() { repeat(5) { wol(); try { ircc(codes["wake"]!!); return } catch (e: Exception) { Thread.sleep(3000) } } }
     fun off() { ircc(codes["off"]!!) }
+    // Chờ TV bật xong (tối đa ~30s); nếu TV không báo trạng thái thì chờ cố định ~12s
+    fun waitActive() {
+        var seen = false
+        for (i in 0 until 15) {
+            val s = status(); if (s == "active") { Thread.sleep(1500); return }
+            if (s.isNotEmpty()) seen = true
+            if (!seen && i == 3) { Thread.sleep(4000); return }
+            Thread.sleep(2000)
+        }
+    }
+}
+
+// ---------- Tự tìm TV (IP + MAC) trong Wi-Fi hiện tại ----------
+object Disc {
+    private var last = 0L
+    private var lastRes = "none"
+    private fun fetch(u: String, body: String? = null): Pair<Int, String>? = try {
+        val c = URL(u).openConnection() as HttpURLConnection
+        c.connectTimeout = 700; c.readTimeout = 1200
+        if (body != null) { c.requestMethod = "POST"; c.doOutput = true; c.outputStream.use { it.write(body.toByteArray()) } }
+        val code = c.responseCode
+        Pair(code, (if (code < 400) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: "")
+    } catch (e: Exception) { null }
+    fun isSony(ip: String): Boolean {
+        fetch("http://$ip:52323/dd.xml")?.let { if (it.second.contains("Sony", true)) return true }
+        val r = fetch("http://$ip/sony/system", Tv.PS) ?: return false
+        return r.second.contains("\"result\"") || r.second.contains("\"error\"")
+    }
+    // IP -> MAC từ bảng ARP (đọc được trên Android ≤ 9; Android mới hơn thì phải nhập MAC tay)
+    fun arp(): Map<String, String> = try {
+        File("/proc/net/arp").readLines().drop(1).mapNotNull { l ->
+            val p = l.trim().split(Regex("\\s+"))
+            if (p.size >= 4 && p[3].contains(":") && p[3] != "00:00:00:00:00:00") p[0] to p[3].lowercase() else null
+        }.toMap()
+    } catch (e: Exception) { emptyMap() }
+    private fun sweep() {
+        val base = myIp().substringBeforeLast('.'); if (base.count { it == '.' } != 2) return
+        val ex = Executors.newFixedThreadPool(64)
+        for (i in 1..254) ex.execute { try { InetAddress.getByName("$base.$i").isReachable(300) } catch (e: Exception) {} }
+        ex.shutdown(); ex.awaitTermination(15, java.util.concurrent.TimeUnit.SECONDS)
+    }
+    // ok = IP đang lưu còn đúng; standby = IP/MAC khớp nhưng TV đang ngủ; moved = đã cập nhật IP mới theo MAC;
+    // found = tìm thấy TV mới và lưu IP/MAC; none = không thấy
+    @Synchronized fun ensure(force: Boolean = false): String {
+        val ip = Cfg["sonyIp"]; val mac = Cfg["tvMac"].lowercase()
+        if (ip.isNotEmpty() && isSony(ip)) { if (mac.isEmpty()) arp()[ip]?.let { Cfg["tvMac"] = it }; return "ok" }
+        if (!force && System.currentTimeMillis() - last < 60000) return lastRes
+        sweep(); val a = arp()
+        var res = "none"
+        if (ip.isNotEmpty() && mac.isNotEmpty() && a[ip] == mac) res = "standby"
+        else {
+            val moved = if (mac.isNotEmpty()) a.entries.firstOrNull { it.value == mac }?.key else null
+            if (moved != null) { Cfg["sonyIp"] = moved; res = "moved" }
+            else {
+                val ex = Executors.newFixedThreadPool(16)
+                val fs = a.keys.map { k -> ex.submit(Callable { isSony(k) }) }
+                val found = a.keys.filterIndexed { i, _ -> fs[i].get() }
+                ex.shutdown()
+                if (found.isNotEmpty()) { Cfg["sonyIp"] = found[0]; Cfg["tvMac"] = a[found[0]] ?: ""; res = "found" }
+            }
+        }
+        last = System.currentTimeMillis(); lastRes = res; return res
+    }
+}
+
+// ---------- Nút nguồn: bật Box -> bật TV -> HDMI; tắt TV -> tắt Box ----------
+object Scene {
+    @Volatile var busy = false
+    @Volatile var err = ""
+    fun awake(c: Context) = (c.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
+    fun tvOn() { Tv.on(); Tv.waitActive(); Tv.ircc(Tv.codes[Cfg["hdmi"]] ?: Tv.codes["hdmi2"]!!) }
+    fun toggle(c: Context): String {
+        if (busy) return "Đang xử lý…"
+        busy = true; err = ""
+        val on = !awake(c)
+        Thread {
+            try {
+                if (on) { try { Adb.sh("input keyevent 224") } catch (e: Exception) { err = e.message ?: "" }; tvOn() }
+                else {
+                    try { Tv.off() } catch (e: Exception) { err = e.message ?: "" }
+                    Thread.sleep(1000); Adb.sh("input keyevent 223"); Thread.sleep(2000)
+                    if (awake(c)) Adb.sh("input keyevent 26")
+                }
+            } catch (e: Exception) { err = e.message ?: "Lỗi" } finally { Thread.sleep(3000); busy = false }
+        }.start()
+        return if (on) "Đang bật Box → TV → ${Cfg["hdmi"].uppercase()}" else "Đang tắt TV → Box"
+    }
 }
 
 // ---------- ADB tới chính Box (127.0.0.1) ----------
@@ -157,6 +255,7 @@ class Srv(private val ctx: Context) : NanoHTTPD(8765) {
             if (b.has("searchApp") && b.getString("searchApp").matches(Regex("[\\w.]*"))) Cfg["searchApp"] = b.getString("searchApp")
             if (b.optString("psk").isNotEmpty()) Cfg["psk"] = b.getString("psk")
             if (b.optString("adbPort").toIntOrNull() != null) Cfg["adbPort"] = b.getString("adbPort")
+            if (b.optString("hdmi") in listOf("tv", "hdmi1", "hdmi2", "hdmi3", "hdmi4")) Cfg["hdmi"] = b.getString("hdmi")
             Adb.reset(); ok()
         }
         "/api/sony" -> { val c = b.optString("cmd"); if (c == "power") Tv.power() else Tv.ircc(Tv.codes[c] ?: throw Exception("Lệnh TV không hỗ trợ")); ok() }
@@ -164,7 +263,9 @@ class Srv(private val ctx: Context) : NanoHTTPD(8765) {
         "/api/box/text" -> { val t = b.optString("text"); if (t.isEmpty() || t.length > 200) throw Exception("Nội dung không hợp lệ"); Box.text(t, b.optBoolean("enter")); ok() }
         "/api/box/search" -> { val q = b.optString("q").trim(); if (q.isEmpty()) throw Exception("Thiếu nội dung"); Box.search(q.take(200)); ok() }
         "/api/box/open" -> { Box.open(); ok() }
-        "/api/status" -> js(JSONObject().put("ok", true).put("sony", Tv.diag())
+        "/api/scene" -> js(JSONObject().put("ok", true).put("msg", Scene.toggle(ctx)))
+        "/api/discover" -> { val r = Disc.ensure(true); js(JSONObject().put("ok", true).put("result", r)) }
+        "/api/status" -> js(JSONObject().put("ok", true).put("sony", Tv.diag()).put("scene", Scene.err)
             .put("box", try { "OK · " + Adb.sh("getprop ro.product.model") } catch (e: Exception) { "Lỗi: " + e.message }))
         else -> throw Exception("API không tồn tại")
     }
@@ -188,15 +289,19 @@ class BridgeService : Service() {
             (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager).createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "tvremote").also { it.acquire() }
             registerReceiver(object : BroadcastReceiver() {
                 override fun onReceive(c: Context, it: Intent) {
-                    val now = System.currentTimeMillis(); if (Cfg["follow"] != "1" || now - last < 3000) return; last = now
+                    val now = System.currentTimeMillis(); if (Cfg["follow"] != "1" || Scene.busy || now - last < 3000) return; last = now
                     val on = it.action == Intent.ACTION_SCREEN_ON
-                    Thread { try { if (on) Tv.on() else Tv.off() } catch (e: Exception) {} }.start()
+                    Thread { try { if (on) Scene.tvOn() else Tv.off() } catch (e: Exception) {} }.start()
                 }
             }, IntentFilter().apply { addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF) })
-            if (i?.getBooleanExtra("boot", false) == true) Thread {
-                if (Cfg["follow"] == "1") Tv.on()
-                // Nếu Box có root: bật ADB TCP sau mỗi lần khởi động (không root thì bỏ qua)
-                try { Runtime.getRuntime().exec(arrayOf("su", "-c", "setprop service.adb.tcp.port 5555;stop adbd;start adbd")).waitFor() } catch (e: Exception) {}
+            val boot = i?.getBooleanExtra("boot", false) == true
+            Thread {
+                try { Disc.ensure() } catch (e: Exception) {}
+                if (boot) {
+                    // Nếu Box có root: bật ADB TCP sau mỗi lần khởi động (không root thì bỏ qua)
+                    try { Runtime.getRuntime().exec(arrayOf("su", "-c", "setprop service.adb.tcp.port 5555;stop adbd;start adbd")).waitFor() } catch (e: Exception) {}
+                    if (Cfg["follow"] == "1") try { Scene.tvOn() } catch (e: Exception) {}
+                }
             }.start()
         }
         return START_STICKY

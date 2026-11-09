@@ -3,6 +3,7 @@ android {
     namespace = "com.ndwood.tvremote"
     compileSdk = 34
     defaultConfig { applicationId = "com.ndwood.tvremote"; minSdk = 21; targetSdk = 28; versionCode = 1; versionName = "1.0" }
+    signingConfigs { getByName("debug") { storeFile = file("../debug.keystore"); storePassword = "android"; keyAlias = "androiddebugkey"; keyPassword = "android" } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }
