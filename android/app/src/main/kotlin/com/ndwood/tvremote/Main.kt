@@ -391,8 +391,11 @@ class MainActivity : Activity() {
             BridgeService.start(this)
             startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
-        btn("CẤP QUYỀN CHẠY NỀN") { openBackgroundSettings() }
-        btn("KHỞI ĐỘNG LẠI DỊCH VỤ") { BridgeService.start(this); toast("Đã yêu cầu khởi động dịch vụ") }
+        btn("QUẢN LÝ CHẠY NỀN / KIỂM TRA TRẠNG THÁI") { showBackgroundPanel() }
+        btn("BỎ TỐI ƯU PIN") { requestBatteryExemption() }
+        btn("MỞ QUẢN LÝ ỨNG DỤNG") { openAppDetails() }
+        btn("MỞ CÀI ĐẶT HỆ THỐNG") { openSystemSettings() }
+        btn("KHỞI ĐỘNG LẠI DỊCH VỤ") { BridgeService.start(this); updateStatus(); toast("Đã yêu cầu khởi động dịch vụ") }
         btn("KIỂM TRA ADB BOX") {
             Thread {
                 val msg = try { "ADB OK · " + Adb.sh("getprop ro.product.model") }
@@ -416,20 +419,54 @@ class MainActivity : Activity() {
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
 
-    private fun openBackgroundSettings() {
+    private fun updateStatus() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        val exempt = Build.VERSION.SDK_INT < 23 || try { pm.isIgnoringBatteryOptimizations(packageName) } catch (_: Exception) { false }
+        val running = try {
+            (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getRunningServices(Int.MAX_VALUE)
+                .any { it.service.className == BridgeService::class.java.name }
+        } catch (_: Exception) { false }
+        val boot = packageManager.getComponentEnabledSetting(ComponentName(this, BootReceiver::class.java)) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+        info.text = "TVRemote · AK312_ATV7 / Android 7.1.2\\nĐịa chỉ điều khiển: http://${myIp()}:8765\\n\\nDỊCH VỤ: " + (if (running) "ĐANG CHẠY" else "CHƯA XÁC NHẬN") +
+            "\\nTối ưu pin: " + (if (exempt) "ĐÃ MIỄN" else "CHƯA MIỄN") +
+            "\\nTự khởi động: Receiver BOOT_COMPLETED " + (if (boot) "ĐÃ BẬT" else "ĐÃ TẮT") +
+            "\\n\\nAndroid 7 không có quyền chung tên 'Chạy nền/Tự khởi động'. Mục Tự khởi động phụ thuộc firmware. Nếu trong Quản lý ứng dụng không có mục này thì firmware không cung cấp giao diện riêng."
+    }
+
+    private fun showBackgroundPanel() {
         BridgeService.start(this)
-        if (Build.VERSION.SDK_INT >= 23) {
-            try {
+        updateStatus()
+        AlertDialog.Builder(this).setTitle("Chạy nền – Android 7.1.2")
+            .setMessage("TVRemote dùng Foreground Service và thông báo thường trực. Ứng dụng đã đăng ký tự chạy sau BOOT_COMPLETED.\\n\\n1. Bỏ tối ưu pin nếu firmware có.\\n2. Trong Quản lý ứng dụng, tìm mục Tự khởi động/Cho phép chạy nền nếu nhà sản xuất có cung cấp.\\n3. Không chọn Buộc dừng (Force stop).\\n\\nAndroid 7 không có một quyền chạy nền chung cho mọi ứng dụng.")
+            .setPositiveButton("Bỏ tối ưu pin") { _, _ -> requestBatteryExemption() }
+            .setNeutralButton("Quản lý ứng dụng") { _, _ -> openAppDetails() }
+            .setNegativeButton("Đóng", null).show()
+    }
+
+    private fun requestBatteryExemption() {
+        try {
+            if (Build.VERSION.SDK_INT >= 23) {
                 val pm = getSystemService(POWER_SERVICE) as PowerManager
-                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                if (pm.isIgnoringBatteryOptimizations(packageName)) {
+                    toast("TVRemote đã được miễn tối ưu pin")
                     return
                 }
-            } catch (_: Exception) {}
+                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+            } else toast("Android 7 không yêu cầu quyền runtime này")
+        } catch (_: Exception) {
+            try { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+            catch (_: Exception) { openAppDetails() }
         }
+    }
+
+    private fun openAppDetails() {
         try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
-        catch (_: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
-        toast("Cho phép chạy nền/tự khởi động và bỏ giới hạn pin nếu firmware có các mục này.")
+        catch (_: Exception) { openSystemSettings() }
+    }
+
+    private fun openSystemSettings() {
+        try { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+        catch (_: Exception) { toast("Không mở được Cài đặt hệ thống") }
     }
 
     private fun confirmUpdate() {
@@ -484,7 +521,7 @@ class MainActivity : Activity() {
         } catch (e: Exception) { toast("Không mở được trình cài đặt: ${e.message}") }
     }
 
-    override fun onResume() { super.onResume(); if (pendingInstall != null) launchInstallerIfAllowed() }
+    override fun onResume() { super.onResume(); updateStatus(); if (pendingInstall != null) launchInstallerIfAllowed() }
     override fun onDestroy() {
         try { downloadReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
         downloadReceiver = null

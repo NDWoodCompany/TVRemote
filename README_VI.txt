@@ -81,3 +81,12 @@ CAP NHAT v6 - ADB KHONG ROOT / QUYEN CHAY NEN / UPDATE TRONG APK
 
 
 LƯU Ý BẢN 1.5: Các ghi chú "CAP NHAT v4 - LOCAL ROOT" phía trên đã lỗi thời. Bản 1.5 bỏ su hoàn toàn và quay lại ADB loopback 127.0.0.1:5555. Chỉ làm theo mục CAP NHAT v6.
+
+
+CAP NHAT v1.6 - TOI UU CHO AK312_ATV7 ANDROID 7.1.2 (API 25)
+- Giao dien APK co trang quan ly chay nen: hien trang thai service (best-effort), tinh trang mien toi uu pin va receiver khoi dong.
+- Nut Bo toi uu pin goi ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS; neu firmware khong co man hinh yeu cau thi mo danh sach bo toi uu pin.
+- Nut Quan ly ung dung mo App Details; tai day co the co Battery/Autostart tuy firmware. Nut Cai dat he thong mo Settings chung.
+- Android 7 khong co API chuan cho Auto-start cua hang san xuat. TVRemote da khai bao BOOT_COMPLETED va QUICKBOOT_POWERON; neu firmware chan third-party autostart thi can cho phep trong menu rieng cua firmware neu co.
+- Service khai bao stopWithTask=false, START_STICKY, Foreground notification, PARTIAL_WAKE_LOCK, Wi-Fi lock va BootReceiver. Khong dam bao song neu Force Stop, firmware kill, reboot khong gui broadcast hoac mat nguon.
+- VersionCode 7 / versionName 1.6.
