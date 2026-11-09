@@ -80,13 +80,21 @@ object Tv {
         }
         return true
     }
+    // Sony BRAVIA dùng IRCC Power chuẩn để bật/tắt. Tránh mã off/wake tự suy diễn.
+    // Nếu TV đang standby, gửi Wake-on-LAN trước rồi gửi Power.
     fun power() {
-        val s = status(); if (s == "active") { ircc(codes["off"]!!); return }
-        val w = wol()
-        try { ircc(codes[if (s == "standby") "wake" else "power"]!!) } catch (e: Exception) { if (!w) throw e }
+        val s = status()
+        if (s == "standby") wol()
+        ircc(codes["power"]!!)
     }
-    fun on() { repeat(5) { wol(); try { ircc(codes["wake"]!!); return } catch (e: Exception) { Thread.sleep(3000) } } }
-    fun off() { ircc(codes["off"]!!) }
+    fun on() {
+        repeat(5) {
+            wol()
+            try { ircc(codes["power"]!!); return } catch (e: Exception) { Thread.sleep(2500) }
+        }
+        throw Exception("Không gửi được lệnh bật TV")
+    }
+    fun off() { ircc(codes["power"]!!) }
     // Chờ TV bật xong (tối đa ~30s); nếu TV không báo trạng thái thì chờ cố định ~12s
     fun waitActive() {
         var seen = false
@@ -275,6 +283,8 @@ class Srv(private val ctx: Context) : NanoHTTPD(8765) {
 class BridgeService : Service() {
     private var srv: Srv? = null
     private var wl: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var screenReceiver: BroadcastReceiver? = null
     private var last = 0L
     override fun onBind(i: Intent?): IBinder? = null
     override fun onCreate() { super.onCreate(); Cfg.init(this); Adb.dir = filesDir }
@@ -282,23 +292,25 @@ class BridgeService : Service() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("b", "TVRemote", NotificationManager.IMPORTANCE_MIN))
         val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "b") else Notification.Builder(this)
-        startForeground(1, nb.setSmallIcon(android.R.drawable.ic_menu_manage).setContentTitle("TVRemote đang chạy").setContentText("http://${myIp()}:8765").build())
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0))
+        startForeground(1, nb.setSmallIcon(android.R.drawable.ic_menu_manage).setContentTitle("TVRemote đang chạy").setContentText("Điều khiển tại http://${myIp()}:8765").setContentIntent(open).setOngoing(true).build())
         if (srv == null) {
             srv = Srv(this).also { try { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) } catch (e: Exception) {} }
-            wl = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "tvremote:srv").also { it.acquire() }
-            (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager).createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "tvremote").also { it.acquire() }
-            registerReceiver(object : BroadcastReceiver() {
+            wl = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "tvremote:srv").also { if (!it.isHeld) it.acquire() }
+            wifiLock = (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager).createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "tvremote").also { if (!it.isHeld) it.acquire() }
+            screenReceiver = object : BroadcastReceiver() {
                 override fun onReceive(c: Context, it: Intent) {
-                    val now = System.currentTimeMillis(); if (Cfg["follow"] != "1" || Scene.busy || now - last < 3000) return; last = now
+                    val now = System.currentTimeMillis()
+                    if (Cfg["follow"] != "1" || Scene.busy || now - last < 3000) return
+                    last = now
                     val on = it.action == Intent.ACTION_SCREEN_ON
                     Thread { try { if (on) Scene.tvOn() else Tv.off() } catch (e: Exception) {} }.start()
                 }
-            }, IntentFilter().apply { addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF) })
+            }.also { r -> registerReceiver(r, IntentFilter().apply { addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF) }) }
             val boot = i?.getBooleanExtra("boot", false) == true
             Thread {
                 try { Disc.ensure() } catch (e: Exception) {}
                 if (boot) {
-                    // Nếu Box có root: bật ADB TCP sau mỗi lần khởi động (không root thì bỏ qua)
                     try { Runtime.getRuntime().exec(arrayOf("su", "-c", "setprop service.adb.tcp.port 5555;stop adbd;start adbd")).waitFor() } catch (e: Exception) {}
                     if (Cfg["follow"] == "1") try { Scene.tvOn() } catch (e: Exception) {}
                 }
@@ -306,7 +318,21 @@ class BridgeService : Service() {
         }
         return START_STICKY
     }
-    override fun onDestroy() { srv?.stop(); wl?.release(); super.onDestroy() }
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val i = Intent(applicationContext, BridgeService::class.java)
+        val pi = PendingIntent.getService(this, 17, i, PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0))
+        (getSystemService(ALARM_SERVICE) as AlarmManager).set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 1500, pi)
+        super.onTaskRemoved(rootIntent)
+    }
+    override fun onDestroy() {
+        try { screenReceiver?.let { unregisterReceiver(it) } } catch (e: Exception) {}
+        screenReceiver = null
+        srv?.stop(); srv = null
+        try { if (wl?.isHeld == true) wl?.release() } catch (e: Exception) {}
+        try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (e: Exception) {}
+        wl = null; wifiLock = null
+        super.onDestroy()
+    }
     companion object {
         fun start(c: Context, boot: Boolean = false) {
             val i = Intent(c, BridgeService::class.java).putExtra("boot", boot)
@@ -314,7 +340,6 @@ class BridgeService : Service() {
         }
     }
 }
-
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) { Cfg.init(c); BridgeService.start(c, i.action != Intent.ACTION_MY_PACKAGE_REPLACED) }
 }
@@ -333,5 +358,7 @@ class MainActivity : Activity() {
         }
         setContentView(l); BridgeService.start(this)
     }
-    override fun onResume() { super.onResume(); t.text = "TVRemote đang chạy nền.\nMở trên điện thoại (cùng Wi-Fi):\nhttp://${myIp()}:8765" }
+    override fun onResume() { super.onResume(); t.text = "TVRemote đang chạy nền.\nMở trên điện thoại (cùng Wi-Fi):\nhttp://${myIp()}:8765\n\nBấm Back để thu nhỏ; dịch vụ vẫn chạy." }
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() { moveTaskToBack(true) }
 }

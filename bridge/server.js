@@ -20,9 +20,8 @@ function wol(){const m=cfg.tvMac.replace(/[^0-9a-f]/gi,'');if(m.length!==12)retu
  s.bind(()=>{s.setBroadcast(true);['255.255.255.255',cfg.sonyIp.replace(/\d+$/,'255')].forEach(a=>s.send(p,9,a));setTimeout(()=>s.close(),500)});return true}
 const powerStatus=async()=>{try{const r=await sonyReq('/sony/system',{method:'POST',body:JSON.stringify({method:'getPowerStatus',id:1,params:[],version:'1.0'})});return (await r.json()).result?.[0]?.status||''}catch{return''}};
 async function tvPower(){const s=await powerStatus();
- if(s==='active')return ircc(IRCC.off);
- const w=wol();if(s==='standby'){try{await ircc(IRCC.wake)}catch(e){if(!w)throw e}return}
- try{await ircc(IRCC.power)}catch(e){if(!w)throw e}}
+ if(s==='standby')wol();
+ return ircc(IRCC.power)}
 // ---------- ADB / Android Box ----------
 const shq=s=>"'"+String(s).replace(/'/g,"'\\''")+"'",tgt=()=>cfg.boxIp+':'+cfg.adbPort;
 const run=(f,a,t=8000)=>new Promise((ok,no)=>execFile(f,a,{timeout:t,windowsHide:true},(e,o,er)=>e?no(Error((String(er||o||e.message)).trim())):ok(String(o).trim())));

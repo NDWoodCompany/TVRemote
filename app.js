@@ -28,12 +28,20 @@ $$('#pad button').forEach(b=>b.onclick=()=>{const k=b.textContent;(target==='tv'
 $$('#tgt button').forEach(b=>b.onclick=()=>{target=b.dataset.t;$$('#tgt button').forEach(x=>x.classList.toggle('on',x===b))});
 // giọng nói + gõ text
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-function manual(m){st(m);$('#q').focus()}
-$('#mic').onclick=()=>{$('#ssheet').hidden=false;if(!SR)return manual('Trình duyệt không hỗ trợ giọng nói – chạm ô nhập rồi dùng micro trên bàn phím (Gboard).');
-const r=new SR();r.lang=localStorage.lang||'vi-VN';r.interimResults=true;r.onstart=()=>st('Đang nghe…');
-r.onresult=e=>{const x=e.results[e.results.length-1];$('#q').value=x[0].transcript;if(x.isFinal){st('Đã nhận: '+x[0].transcript);doSearch()}};
-r.onerror=e=>manual('Micro trình duyệt không dùng được ('+e.error+'). Chạm ô nhập rồi bấm micro trên bàn phím.');
-try{r.start()}catch(e){}};
+function manual(m){st(m);$('#q').placeholder='Nhập nội dung hoặc dùng micro trên bàn phím…';$('#q').focus()}
+$('#mic').onclick=()=>{
+ $('#ssheet').hidden=false;
+ if(!SR)return manual('Trình duyệt không hỗ trợ nhận dạng giọng nói trực tiếp. Ô nhập đã sẵn sàng – chạm micro trên bàn phím điện thoại.');
+ const host=location.hostname;
+ if(!window.isSecureContext&&host!=='localhost'&&host!=='127.0.0.1')return manual('Nguồn HTTP nội bộ không đủ điều kiện dùng micro trực tiếp. Hãy dùng micro trên bàn phím điện thoại hoặc mở giao diện qua HTTPS.');
+ const r=new SR();let finalSeen=false;r.lang=localStorage.lang||'vi-VN';r.interimResults=true;r.continuous=false;
+ r.onstart=()=>st('🎙 ĐANG NGHE… Hãy nói nội dung tìm kiếm');
+ r.onresult=e=>{const x=e.results[e.results.length-1];$('#q').value=x[0].transcript;if(x.isFinal){finalSeen=true;st('Đã nhận: '+x[0].transcript+' – đang gửi tìm kiếm…');doSearch()}};
+ r.onnomatch=()=>manual('Chưa nhận ra giọng nói. Hãy thử lại hoặc dùng micro trên bàn phím.');
+ r.onerror=e=>manual('Không mở được micro ('+e.error+'). Kiểm tra quyền micro, HTTPS hoặc dùng micro trên bàn phím.');
+ r.onend=()=>{if(!finalSeen&&$('#st').textContent.includes('ĐANG NGHE'))manual('Đã dừng nghe nhưng chưa nhận được nội dung. Chạm micro để thử lại.')};
+ try{r.start()}catch(e){manual('Không khởi động được micro: '+e.message+' – dùng micro trên bàn phím.')}
+};
 const val=()=>{const q=$('#q').value.trim();if(!q)toast('Nhập hoặc nói nội dung trước');return q};
 async function doSearch(){const q=val();if(!q)return;st('Đang gửi tìm kiếm tới Box…');try{await api('box/search',{q});st('Đã gửi: '+q)}catch(e){st('Lỗi: '+e.message)}}
 $('#goSearch').onclick=doSearch;$('#q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch()});
