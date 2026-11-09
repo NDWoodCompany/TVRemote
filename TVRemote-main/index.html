@@ -1,0 +1,56 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="theme-color" content="#1c202c"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css"><title>TVRemote</title></head><body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<symbol id="power" viewBox="0 0 48 48"><path d="M15.5 10.5A17.7 17.7 0 1 0 32.5 10.5M24 5V25"/></symbol>
+<symbol id="inp" viewBox="0 0 48 48"><path d="M22 14h18a4 4 0 0 1 4 4v12a4 4 0 0 1-4 4H22M4 24h20M17 17l7 7-7 7"/></symbol>
+<symbol id="mic" viewBox="0 0 48 48"><path fill="currentColor" stroke="none" d="M24 3a7 7 0 0 0-7 7v12a7 7 0 0 0 14 0V10a7 7 0 0 0-7-7z"/><path d="M12 21a12 12 0 0 0 24 0M24 34v9M16 43h16"/></symbol>
+<symbol id="mute" viewBox="0 0 48 48"><path fill="currentColor" stroke="none" d="M4 18h9l11-9v30l-11-9H4z"/><path d="M31 19l9 10M40 19l-9 10"/></symbol>
+<symbol id="back" viewBox="0 0 48 48"><path d="M42 24H8M19 12L7 24l12 12"/></symbol>
+<symbol id="plus" viewBox="0 0 48 48"><path d="M24 8v32M8 24h32"/></symbol>
+<symbol id="minus" viewBox="0 0 48 48"><path d="M8 24h32"/></symbol>
+<symbol id="tri" viewBox="0 0 48 38"><path d="M24 4L44 34H4z"/></symbol>
+<symbol id="rem" viewBox="0 0 48 48"><rect x="13" y="4" width="22" height="40" rx="9"/><rect x="20" y="12" width="8" height="10" rx="4"/></symbol>
+<symbol id="pad" viewBox="0 0 48 48"><path d="M8 6h6v6H8zM21 6h6v6h-6zM34 6h6v6h-6zM8 19h6v6H8zM21 19h6v6h-6zM34 19h6v6h-6zM8 32h6v6H8zM21 32h6v6h-6zM34 32h6v6h-6zM21 45h6"/></symbol>
+<symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+<symbol id="kbd" viewBox="0 0 48 48"><rect x="4" y="12" width="40" height="24" rx="4"/><path d="M11 20h.5M18 20h.5M25 20h.5M32 20h.5M39 20h.5M12 28h24"/></symbol>
+</defs></svg>
+<main class="app">
+<div id="warn" class="warn" hidden>Mất kết nối với app TVRemote trên Box (Box đang tắt hẳn hoặc app bị hệ thống dừng?). Hãy mở remote bằng địa chỉ http://IP-box:8765.</div>
+<section id="remote" class="view on">
+<div class="stage">
+<button class="pill" style="--x:7.4;--y:0;--w:18.2;--h:10.6" data-s="power"><b>TV</b></button>
+<i class="cap" style="--x:2.5;--y:11.8;--w:28">SONY BRAVIA<br>KDL-42W674A</i>
+<button class="pill red" id="pw" style="--x:40.9;--y:0;--w:18.2;--h:10.6"><svg class="ic"><use href="#power"/></svg></button>
+<i class="cap" style="--x:36;--y:11.8;--w:28">ANDROID TV BOX</i>
+<button class="pill" id="inBtn" style="--x:74.4;--y:0;--w:18.2;--h:10.6"><svg class="ic"><use href="#inp"/></svg></button>
+<i class="cap" id="inCap" style="--x:69.5;--y:11.8;--w:28">HDMI 2</i>
+<div class="vol" style="--x:8.4;--y:19.5;--w:18.2;--h:46"><button data-s="volUp" data-r><svg class="ic"><use href="#plus"/></svg></button><div class="m"><span>VOL</span><em>TV</em></div><button data-s="volDown" data-r><svg class="ic"><use href="#minus"/></svg></button></div>
+<div class="vol" style="--x:73.4;--y:19.5;--w:18.2;--h:46"><button data-b="VOL+" data-r><svg class="ic"><use href="#plus"/></svg></button><div class="m"><span>VOL</span><em>BOX</em></div><button data-b="VOL-" data-r><svg class="ic"><use href="#minus"/></svg></button></div>
+<button class="pill mic" id="mic" style="--x:44.7;--y:19.5;--w:10.6;--h:14"><svg class="ic"><use href="#mic"/></svg></button>
+<button class="pill" id="txt" style="--x:40.9;--y:40.1;--w:18.2;--h:9.4"><svg class="ic"><use href="#kbd"/></svg></button>
+<button class="pill" style="--x:40.9;--y:56.1;--w:18.2;--h:9.4" data-s="mute"><svg class="ic"><use href="#mute"/></svg></button>
+<div class="ring" style="--x:25;--y:68.5;--w:50;--h:50">
+<button class="a up" data-b="UP" data-r><svg class="ic"><use href="#tri"/></svg></button>
+<button class="a l" data-b="LEFT" data-r><svg class="ic"><use href="#tri"/></svg></button>
+<button class="a r" data-b="RIGHT" data-r><svg class="ic"><use href="#tri"/></svg></button>
+<button class="a d" data-b="DOWN" data-r><svg class="ic"><use href="#tri"/></svg></button>
+<button class="ok" data-b="OK">OK</button></div>
+<button class="pill" style="--x:8.4;--y:112.1;--w:18.2;--h:9.4" data-b="BACK"><svg class="ic"><use href="#back"/></svg></button>
+<button class="pill" style="--x:73.4;--y:112.1;--w:18.2;--h:9.4" data-b="EXIT"><b style="font-size:calc(var(--k)*4.2)">EXIT</b></button>
+</div>
+</section>
+<section id="keys" class="view"><div class="seg" id="tgt"><button data-t="tv">TV</button><button data-t="box" class="on">BOX</button></div><div class="pad" id="pad"></div></section>
+<section id="set" class="view set"><h2>Cài đặt</h2><form id="form" onsubmit="return false"></form>
+<div class="row"><button class="btn p" id="save">Lưu</button><button class="btn" id="find">Tự tìm TV</button><button class="btn" id="diag">Kiểm tra kết nối</button></div><div class="st" id="res"></div></section>
+<nav><button class="on" data-v="remote"><svg class="ic"><use href="#rem"/></svg></button><button data-v="keys"><svg class="ic"><use href="#pad"/></svg></button><button data-v="set"><svg class="ic" style="stroke-width:1.6"><use href="#gear"/></svg></button></nav>
+</main>
+<div id="ssheet" class="sheet" hidden><div><div class="search">
+<input type="text" id="q" placeholder="Nói (chạm micro) hoặc nhập nội dung…" enterkeyhint="search" autocomplete="off">
+<div class="row"><button class="btn p" id="goSearch">Tìm trên Box</button><button class="btn" id="goType">Gõ vào ô nhập</button><button class="btn" id="goOpen">Mở app</button></div>
+<label class="chk"><input type="checkbox" id="ent" checked> Nhấn Enter sau khi gõ</label>
+<div class="st" id="st"></div></div></div></div>
+<div id="sheet" class="sheet" hidden><div><h3>Chọn nguồn vào của TV</h3></div></div>
+<div id="toast"></div>
+<script src="app.js"></script></body></html>
