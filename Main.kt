@@ -17,7 +17,7 @@ import java.io.File
 import java.net.*
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
-
+import android.view.Gravity
 object Cfg {
     lateinit var sp: SharedPreferences
     fun init(c: Context) { if (!::sp.isInitialized) sp = c.getSharedPreferences("cfg", 0) }
