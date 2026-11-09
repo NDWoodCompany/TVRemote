@@ -10,7 +10,6 @@ import android.provider.Settings
 import android.widget.*
 import dadb.AdbKeyPair
 import dadb.Dadb
-import fi.iki.elonen.NanoHTTPD
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -173,7 +172,6 @@ object Scene {
     @Volatile var busy = false
     @Volatile var err = ""
     @Volatile var lastCommandAt = 0L
-    fun awake(c: Context) = (c.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
     fun tvOn() {
         Tv.on()
         Tv.waitActive()
@@ -184,7 +182,8 @@ object Scene {
         busy = true
         err = ""
         lastCommandAt = System.currentTimeMillis()
-        val wasAwake = awake(c)
+        val tvState = Tv.status()
+        val wasAwake = tvState == "active"
         Thread {
             try {
                 if (wasAwake) {
@@ -207,7 +206,7 @@ object Scene {
                 busy = false
             }
         }.start()
-        return if (wasAwake) "Đang tắt TV rồi đưa màn hình Box vào chế độ ngủ" else "Đang đánh thức Box rồi bật TV"
+        return if (wasAwake) "Đang tắt TV rồi đưa Box vào chế độ ngủ" else "Đang đánh thức Box rồi bật TV"
     }
 }
 
@@ -260,56 +259,8 @@ object Box {
     fun key(key: String) { val code = KEY[key] ?: throw Exception("Phím không hỗ trợ: $key"); Adb.sh("input keyevent $code") }
 }
 
-// ---------- HTTP: phục vụ giao diện + API (cùng giao thức với bridge/server.js) ----------
-class Srv(private val ctx: Context) : NanoHTTPD(8765) {
-    private fun cors(r: Response): Response { r.addHeader("Access-Control-Allow-Origin", "*"); r.addHeader("Access-Control-Allow-Headers", "Content-Type"); r.addHeader("Access-Control-Allow-Private-Network", "true"); return r }
-    private fun js(o: JSONObject) = cors(newFixedLengthResponse(Response.Status.OK, "application/json", o.toString()))
-    private fun ok() = js(JSONObject().put("ok", true))
-    override fun serve(s: IHTTPSession): Response {
-        val p = s.uri
-        if (s.method == Method.OPTIONS) return cors(newFixedLengthResponse(Response.Status.NO_CONTENT, "text/plain", ""))
-        if (p.startsWith("/api/")) {
-            var b = JSONObject()
-            if (s.method == Method.POST) { val m = HashMap<String, String>(); try { s.parseBody(m); b = JSONObject(m["postData"] ?: "{}") } catch (e: Exception) {} }
-            return try { api(p, s.method == Method.POST, b) } catch (e: Exception) { js(JSONObject().put("ok", false).put("error", e.message ?: "Lỗi")) }
-        }
-        val f = if (p == "/") "index.html" else p.substring(1)
-        return try {
-            if (f.contains("..")) throw Exception()
-            val bytes = ctx.assets.open("web/$f").readBytes()
-            val mime = when (f.substringAfterLast('.')) { "html" -> "text/html; charset=utf-8"; "css" -> "text/css"; "js" -> "text/javascript"
-                "webmanifest" -> "application/manifest+json"; "png" -> "image/png"; else -> "application/octet-stream" }
-            newFixedLengthResponse(Response.Status.OK, mime, ByteArrayInputStream(bytes), bytes.size.toLong()).also { it.addHeader("Cache-Control", "no-cache") }
-        } catch (e: Exception) { newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "404") }
-    }
-    private fun api(p: String, post: Boolean, b: JSONObject): Response = when (p) {
-        "/api/config" -> if (!post) {
-            val c = JSONObject(); for (k in Cfg.keys) if (k != "psk") c.put(k, Cfg[k])
-            js(JSONObject().put("ok", true).put("cfg", c.put("pskSet", Cfg["psk"].isNotEmpty())))
-        } else {
-            for (k in listOf("sonyIp", "tvMac", "boxIp", "follow")) if (b.has(k)) Cfg[k] = b.getString(k).trim()
-            if (b.has("searchApp") && b.getString("searchApp").matches(Regex("[\\w.]*"))) Cfg["searchApp"] = b.getString("searchApp")
-            if (b.optString("psk").isNotEmpty()) Cfg["psk"] = b.getString("psk")
-            if (b.optString("adbPort").toIntOrNull() != null) Cfg["adbPort"] = b.getString("adbPort")
-            if (b.optString("hdmi") in listOf("tv", "hdmi1", "hdmi2", "hdmi3", "hdmi4")) Cfg["hdmi"] = b.getString("hdmi")
-            ok()
-        }
-        "/api/sony" -> { val c = b.optString("cmd"); if (c == "power") Tv.power() else Tv.ircc(Tv.codes[c] ?: throw Exception("Lệnh TV không hỗ trợ")); ok() }
-        "/api/box" -> { Box.key(b.optString("key")); ok() }
-        "/api/box/text" -> { val t = b.optString("text"); if (t.isEmpty() || t.length > 200) throw Exception("Nội dung không hợp lệ"); Box.text(t, b.optBoolean("enter")); ok() }
-        "/api/box/search" -> { val q = b.optString("q").trim(); if (q.isEmpty()) throw Exception("Thiếu nội dung"); Box.search(q.take(200)); ok() }
-        "/api/box/open" -> { Box.open(); ok() }
-        "/api/scene" -> js(JSONObject().put("ok", true).put("msg", Scene.toggle(ctx)))
-        "/api/discover" -> { val r = Disc.ensure(true); js(JSONObject().put("ok", true).put("result", r)) }
-        "/api/status" -> js(JSONObject().put("ok", true).put("sony", Tv.diag()).put("scene", Scene.err)
-            .put("box", try { "OK · " + Adb.sh("getprop ro.product.model") } catch (e: Exception) { "Lỗi: " + e.message }))
-        else -> throw Exception("API không tồn tại")
-    }
-}
-
 // ---------- Dịch vụ nền tự chạy cùng hệ thống ----------
 class BridgeService : Service() {
-    private var srv: Srv? = null
     private var wl: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var screenReceiver: BroadcastReceiver? = null
@@ -321,9 +272,8 @@ class BridgeService : Service() {
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("b", "TVRemote", NotificationManager.IMPORTANCE_MIN))
         val nb = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "b") else Notification.Builder(this)
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0))
-        startForeground(1, nb.setSmallIcon(android.R.drawable.ic_menu_manage).setContentTitle("TVRemote đang chạy").setContentText("Đang chạy nền · http://${myIp()}:8765").setContentIntent(open).setOngoing(true).build())
-        if (srv == null) {
-            srv = Srv(this).also { try { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) } catch (e: Exception) {} }
+        startForeground(1, nb.setSmallIcon(android.R.drawable.ic_menu_manage).setContentTitle("TVRemote đang chạy").setContentText("Đang chạy nền · điều khiển native").setContentIntent(open).setOngoing(true).build())
+        if (wl == null) {
             wl = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "tvremote:srv").also { if (!it.isHeld) it.acquire() }
             wifiLock = (applicationContext.getSystemService(WIFI_SERVICE) as WifiManager).createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "tvremote").also { if (!it.isHeld) it.acquire() }
             screenReceiver = object : BroadcastReceiver() {
@@ -354,7 +304,6 @@ class BridgeService : Service() {
     override fun onDestroy() {
         try { screenReceiver?.let { unregisterReceiver(it) } } catch (e: Exception) {}
         screenReceiver = null
-        srv?.stop(); srv = null
         try { if (wl?.isHeld == true) wl?.release() } catch (e: Exception) {}
         try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (e: Exception) {}
         wl = null; wifiLock = null
@@ -372,162 +321,46 @@ class BootReceiver : BroadcastReceiver() {
 }
 
 class MainActivity : Activity() {
-    private lateinit var info: TextView
-    private var downloadManager: DownloadManager? = null
-    private var downloadId = -1L
-    private var pendingInstall: Uri? = null
-    private var downloadReceiver: BroadcastReceiver? = null
-    private val apkUrl = "https://github.com/NDWoodCompany/TVRemote/releases/download/apk-latest/TVRemote.apk"
-
-    override fun onCreate(b: Bundle?) {
-        super.onCreate(b)
-        Cfg.init(this)
-        Adb.dir = filesDir
-        downloadManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
-        val l = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(36, 32, 36, 32) }
-        info = TextView(this).apply { textSize = 17f }
-        l.addView(info)
-        fun btn(s: String, f: () -> Unit) { val x = Button(this); x.text = s; x.setOnClickListener { f() }; l.addView(x) }
-        btn("CHẠY NGẦM – VỀ HOME") {
-            BridgeService.start(this)
-            startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
-        btn("QUẢN LÝ CHẠY NỀN / KIỂM TRA TRẠNG THÁI") { showBackgroundPanel() }
-        btn("BỎ TỐI ƯU PIN") { requestBatteryExemption() }
-        btn("MỞ QUẢN LÝ ỨNG DỤNG") { openAppDetails() }
-        btn("MỞ CÀI ĐẶT HỆ THỐNG") { openSystemSettings() }
-        btn("KHỞI ĐỘNG LẠI DỊCH VỤ") { BridgeService.start(this); updateStatus(); toast("Đã yêu cầu khởi động dịch vụ") }
-        btn("KIỂM TRA ADB BOX") {
-            Thread {
-                val msg = try { "ADB OK · " + Adb.sh("getprop ro.product.model") }
-                catch (e: Exception) { "ADB chưa kết nối: " + (e.message ?: "") }
-                runOnUiThread { info.text = msg }
-            }.start()
-        }
-        btn("CẬP NHẬT TVREMOTE") { confirmUpdate() }
-        info.text = "TVRemote đang chạy.\nĐịa chỉ điều khiển: http://${myIp()}:8765\n\nChạy ngầm: đưa giao diện về HOME, dịch vụ tiếp tục chạy.\nCập nhật: tải APK từ GitHub rồi mở trình cài đặt để bạn xác nhận."
-        setContentView(l)
-        BridgeService.start(this)
-        downloadReceiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context?, i: Intent?) {
-                if (i?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
-                val id = i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
-                if (id == downloadId) handleDownloadComplete(id)
-            }
-        }
-        registerReceiver(downloadReceiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
+    private lateinit var root: LinearLayout
+    private lateinit var status: TextView
+    private lateinit var tabArea: LinearLayout
+    private var selectedTab = 0
+    private val bg = 0xFF101820.toInt(); private val panel = 0xFF1D2A35.toInt(); private val accent = 0xFF35C7B0.toInt(); private val fg = 0xFFF1F5F8.toInt()
+    override fun onCreate(b: Bundle?) { super.onCreate(b); Cfg.init(this); Adb.dir = filesDir; BridgeService.start(this); buildUi() }
+    private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
+    private fun label(t: String, size: Float = 15f) = TextView(this).apply { text=t; textSize=size; setTextColor(fg); gravity=Gravity.CENTER; setPadding(dp(6),dp(8),dp(6),dp(8)) }
+    private fun button(t: String, action: () -> Unit): Button = Button(this).apply { text=t; isAllCaps=false; textSize=15f; setTextColor(fg); setBackgroundTintList(android.content.res.ColorStateList.valueOf(panel)); setOnClickListener { action() } }
+    private fun row(parent: LinearLayout, vararg items: Pair<String, () -> Unit>) { val r=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER; weightSum=items.size.toFloat() }; items.forEach { (t,a) -> r.addView(button(t,a), LinearLayout.LayoutParams(0,dp(58),1f).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) }) }; parent.addView(r) }
+    private fun action(name: String, block: () -> Unit) { Thread { val result=try { block(); "Đã gửi: $name" } catch(e:Exception) { "Lỗi $name: ${e.message}" }; runOnUiThread { status.text=result } }.start() }
+    private fun buildUi() {
+        root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(bg); setPadding(dp(12),dp(8),dp(12),dp(8)) }
+        val head=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
+        head.addView(label("TVRemote",22f),LinearLayout.LayoutParams(0,dp(52),1f)); head.addView(button("⟳ Tìm thiết bị") { discover() },LinearLayout.LayoutParams(-2,dp(48)))
+        root.addView(head); status=label("Đang khởi động dịch vụ…",12f).apply { gravity=Gravity.START; setBackgroundColor(panel) }; root.addView(status)
+        val tabs=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL }; listOf("ĐIỀU KHIỂN","BÀN PHÍM","CÀI ĐẶT").forEachIndexed { i,t -> tabs.addView(button(t) { selectedTab=i; renderTab() },LinearLayout.LayoutParams(0,dp(48),1f)) }; root.addView(tabs)
+        tabArea=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; gravity=Gravity.CENTER_HORIZONTAL; setPadding(0,dp(8),0,0) }; root.addView(tabArea,LinearLayout.LayoutParams(-1,0,1f))
+        row(root,"Chạy nền / về Home" to { BridgeService.start(this); moveTaskToBack(true) },"Kiểm tra kết nối" to { checkConnections() })
+        setContentView(root); renderTab(); refreshStatus()
     }
-
-    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
-
-    private fun updateStatus() {
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        val exempt = Build.VERSION.SDK_INT < 23 || try { pm.isIgnoringBatteryOptimizations(packageName) } catch (_: Exception) { false }
-        val running = try {
-            (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getRunningServices(Int.MAX_VALUE)
-                .any { it.service.className == BridgeService::class.java.name }
-        } catch (_: Exception) { false }
-        val boot = packageManager.getComponentEnabledSetting(ComponentName(this, BootReceiver::class.java)) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-        info.text = "TVRemote · AK312_ATV7 / Android 7.1.2\\nĐịa chỉ điều khiển: http://${myIp()}:8765\\n\\nDỊCH VỤ: " + (if (running) "ĐANG CHẠY" else "CHƯA XÁC NHẬN") +
-            "\\nTối ưu pin: " + (if (exempt) "ĐÃ MIỄN" else "CHƯA MIỄN") +
-            "\\nTự khởi động: Receiver BOOT_COMPLETED " + (if (boot) "ĐÃ BẬT" else "ĐÃ TẮT") +
-            "\\n\\nAndroid 7 không có quyền chung tên 'Chạy nền/Tự khởi động'. Mục Tự khởi động phụ thuộc firmware. Nếu trong Quản lý ứng dụng không có mục này thì firmware không cung cấp giao diện riêng."
+    private fun renderTab() { tabArea.removeAllViews(); when(selectedTab) {
+        0 -> { row(tabArea,"⏻ NGUỒN / SCENE" to { action("Scene") { Scene.toggle(this) } }); row(tabArea,"TV Power" to { action("TV Power") { Tv.power() } },"HDMI 1" to { action("HDMI 1") { Tv.ircc(Tv.codes["hdmi1"]!!) } },"HDMI 2" to { action("HDMI 2") { Tv.ircc(Tv.codes["hdmi2"]!!) } }); row(tabArea,"TV Vol +" to { action("TV Vol+") { Tv.ircc(Tv.codes["volUp"]!!) } },"TV Vol −" to { action("TV Vol-") { Tv.ircc(Tv.codes["volDown"]!!) } },"TV Mute" to { action("TV Mute") { Tv.ircc(Tv.codes["mute"]!!) } }); row(tabArea,"Box Vol +" to { action("Box Vol+") { Box.key("VOL+") } },"Box Vol −" to { action("Box Vol-") { Box.key("VOL-") } },"Box Mute" to { action("Box Mute") { Box.key("MUTE") } }); row(tabArea,"BACK" to { action("Back") { Box.key("BACK") } },"HOME" to { action("Home") { Box.key("HOME") } },"EXIT" to { action("Exit") { Box.key("EXIT") } }); val pad=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; gravity=Gravity.CENTER }; row(pad,"▲" to { action("Up") { Box.key("UP") } }); row(pad,"◀" to { action("Left") { Box.key("LEFT") } },"OK" to { action("OK") { Box.key("OK") } },"▶" to { action("Right") { Box.key("RIGHT") } }); row(pad,"▼" to { action("Down") { Box.key("DOWN") } }); tabArea.addView(pad); row(tabArea,"Mở YouTube" to { action("Mở ứng dụng tìm kiếm") { Box.open() } },"🎙 Giọng nói" to { voice() }) }
+        1 -> { row(tabArea,"1" to { sendKey("1") },"2" to { sendKey("2") },"3" to { sendKey("3") }); row(tabArea,"4" to { sendKey("4") },"5" to { sendKey("5") },"6" to { sendKey("6") }); row(tabArea,"7" to { sendKey("7") },"8" to { sendKey("8") },"9" to { sendKey("9") }); row(tabArea,"*" to { sendKey("*") },"0" to { sendKey("0") },"#" to { sendKey("#") }); row(tabArea,"CH +" to { action("Channel+") { Box.key("UP") } },"CH −" to { action("Channel-") { Box.key("DOWN") } }) }
+        else -> settingsUi()
+    } }
+    private fun sendKey(k:String) = action("Phím $k") { Box.key(k) }
+    private fun discover() = action("Tìm thiết bị") { val r=Disc.ensure(true); "Quét xong: $r · TV ${Cfg["sonyIp"]}".also { runOnUiThread { refreshStatus() } } }
+    private fun checkConnections() = action("Kiểm tra") { val tv=Tv.diag(); val box=Adb.sh("getprop ro.product.model"); "TV: $tv\nBox: $box" }
+    private fun refreshStatus() { status.text="TV: ${Cfg["sonyIp"].ifEmpty { "chưa tìm thấy" }}   ·   Box: ${Cfg["boxIp"]}:${Cfg["adbPort"]}\nDịch vụ điều khiển đang chạy trên điện thoại" }
+    private fun settingsUi() {
+        fun field(title:String,key:String,hint:String=""): EditText { tabArea.addView(label(title).apply { gravity=Gravity.START }); val e=EditText(this).apply { setText(Cfg[key]); setSingleLine(true); setTextColor(fg); setHintTextColor(0xFF9AAAB5.toInt()); setHint(hint); setPadding(dp(12),0,dp(12),0); setBackgroundColor(panel) }; tabArea.addView(e,LinearLayout.LayoutParams(-1,dp(48))); return e }
+        val tv=field("IP TV Sony","sonyIp","Ví dụ 192.168.1.234"); val box=field("IP Android TV Box","boxIp","Ví dụ 192.168.1.233"); val psk=field("Sony PSK (nếu đã bật IP Control)","psk","Để trống nếu không dùng"); val mac=field("MAC TV (dùng Wake-on-LAN)","tvMac","AA:BB:CC:DD:EE:FF")
+        row(tabArea,"LƯU CẤU HÌNH" to { Cfg["sonyIp"]=tv.text.toString().trim(); Cfg["boxIp"]=box.text.toString().trim(); Cfg["psk"]=psk.text.toString().trim(); Cfg["tvMac"]=mac.text.toString().trim(); refreshStatus(); status.text="Đã lưu cấu hình thiết bị" })
+        row(tabArea,"Kiểm tra ADB" to { action("ADB") { "ADB OK · "+Adb.sh("getprop ro.product.model") } },"Chạy nền" to { BridgeService.start(this); requestBatteryExemption() })
+        row(tabArea,"Cập nhật APK" to { Toast.makeText(this,"Bản cập nhật sẽ được bổ sung trong bước hoàn thiện",Toast.LENGTH_LONG).show() })
     }
-
-    private fun showBackgroundPanel() {
-        BridgeService.start(this)
-        updateStatus()
-        AlertDialog.Builder(this).setTitle("Chạy nền – Android 7.1.2")
-            .setMessage("TVRemote dùng Foreground Service và thông báo thường trực. Ứng dụng đã đăng ký tự chạy sau BOOT_COMPLETED.\\n\\n1. Bỏ tối ưu pin nếu firmware có.\\n2. Trong Quản lý ứng dụng, tìm mục Tự khởi động/Cho phép chạy nền nếu nhà sản xuất có cung cấp.\\n3. Không chọn Buộc dừng (Force stop).\\n\\nAndroid 7 không có một quyền chạy nền chung cho mọi ứng dụng.")
-            .setPositiveButton("Bỏ tối ưu pin") { _, _ -> requestBatteryExemption() }
-            .setNeutralButton("Quản lý ứng dụng") { _, _ -> openAppDetails() }
-            .setNegativeButton("Đóng", null).show()
-    }
-
-    private fun requestBatteryExemption() {
-        try {
-            if (Build.VERSION.SDK_INT >= 23) {
-                val pm = getSystemService(POWER_SERVICE) as PowerManager
-                if (pm.isIgnoringBatteryOptimizations(packageName)) {
-                    toast("TVRemote đã được miễn tối ưu pin")
-                    return
-                }
-                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
-            } else toast("Android 7 không yêu cầu quyền runtime này")
-        } catch (_: Exception) {
-            try { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-            catch (_: Exception) { openAppDetails() }
-        }
-    }
-
-    private fun openAppDetails() {
-        try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }
-        catch (_: Exception) { openSystemSettings() }
-    }
-
-    private fun openSystemSettings() {
-        try { startActivity(Intent(Settings.ACTION_SETTINGS)) }
-        catch (_: Exception) { toast("Không mở được Cài đặt hệ thống") }
-    }
-
-    private fun confirmUpdate() {
-        AlertDialog.Builder(this).setTitle("Cập nhật TVRemote")
-            .setMessage("Tải APK mới nhất từ GitHub Releases? Khi tải xong, Android sẽ mở trình cài đặt để bạn xác nhận.")
-            .setNegativeButton("Hủy", null)
-            .setPositiveButton("Tải cập nhật") { _, _ -> startUpdateDownload() }.show()
-    }
-
-    private fun startUpdateDownload() {
-        try {
-            val req = DownloadManager.Request(Uri.parse(apkUrl))
-                .setTitle("TVRemote – cập nhật").setDescription("Đang tải APK mới nhất từ GitHub")
-                .setMimeType("application/vnd.android.package-archive")
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setAllowedOverMetered(true).setAllowedOverRoaming(false)
-                .setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, "TVRemote-update.apk")
-            downloadId = downloadManager!!.enqueue(req)
-            toast("Đã bắt đầu tải APK. Có thể tiếp tục sử dụng Box.")
-        } catch (e: Exception) { toast("Không thể tải cập nhật: ${e.message}") }
-    }
-
-    private fun handleDownloadComplete(id: Long) {
-        try {
-            val c = downloadManager!!.query(DownloadManager.Query().setFilterById(id)) ?: throw Exception("Không đọc được trạng thái tải")
-            c.use {
-                if (!it.moveToFirst()) throw Exception("Không tìm thấy file tải")
-                val status = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                if (status != DownloadManager.STATUS_SUCCESSFUL) {
-                    val reason = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
-                    throw Exception("Tải thất bại (mã $reason)")
-                }
-            }
-            pendingInstall = downloadManager!!.getUriForDownloadedFile(id) ?: throw Exception("Không lấy được URI APK")
-            launchInstallerIfAllowed()
-        } catch (e: Exception) { toast("Cập nhật lỗi: ${e.message}") }
-    }
-
-    private fun launchInstallerIfAllowed() {
-        val uri = pendingInstall ?: return
-        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
-            try {
-                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
-                toast("Bật Cho phép cài ứng dụng từ nguồn này rồi quay lại TVRemote.")
-            } catch (_: Exception) { toast("Hãy bật quyền cài ứng dụng không rõ nguồn trong Cài đặt Android.") }
-            return
-        }
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION))
-            pendingInstall = null
-        } catch (e: Exception) { toast("Không mở được trình cài đặt: ${e.message}") }
-    }
-
-    override fun onResume() { super.onResume(); updateStatus(); if (pendingInstall != null) launchInstallerIfAllowed() }
-    override fun onDestroy() {
-        try { downloadReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
-        downloadReceiver = null
-        super.onDestroy()
-    }
-    @Suppress("DEPRECATION")
-    override fun onBackPressed() { moveTaskToBack(true) }
+    private fun voice() { try { val i=Intent("android.speech.action.RECOGNIZE_SPEECH").putExtra("android.speech.extra.LANGUAGE","vi-VN").putExtra("android.speech.extra.LANGUAGE_MODEL","free_form").putExtra("android.speech.extra.PROMPT","Nói nội dung cần tìm trên YouTube"); startActivityForResult(i,41) } catch(e:Exception) { status.text="Thiết bị chưa có dịch vụ nhận dạng giọng nói tiếng Việt" } }
+    override fun onActivityResult(req:Int,res:Int,data:Intent?) { super.onActivityResult(req,res,data); if(req==41 && res==RESULT_OK) { val q=data?.getStringArrayListExtra("android.speech.extra.RESULTS")?.firstOrNull().orEmpty(); if(q.isNotBlank()) action("Tìm kiếm: $q") { Box.search(q) } } }
+    private fun requestBatteryExemption() { if(Build.VERSION.SDK_INT>=23) try { val pm=getSystemService(POWER_SERVICE) as PowerManager; if(!pm.isIgnoringBatteryOptimizations(packageName)) startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,Uri.parse("package:$packageName"))) else status.text="Đã miễn tối ưu pin" } catch(e:Exception) { status.text="Không mở được cài đặt pin: ${e.message}" } else status.text="Android 7 không cần quyền tối ưu pin này" }
+    override fun onResume() { super.onResume(); if(::status.isInitialized) refreshStatus() }
+    @Suppress("DEPRECATION") override fun onBackPressed() { moveTaskToBack(true) }
 }

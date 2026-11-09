@@ -1,97 +1,27 @@
-TVREMOTE: APP ANDROID CHẠY NỀN TRÊN BOX + WEB REMOTE
-=====================================================
-Không cần bridge/Node/Termux nữa: chính app TVRemote.apk (cài trên Android box) là "bridge".
-Nó tự chạy cùng hệ thống, phục vụ web remote tại http://IP-box:8765 cho mọi điện thoại trong nhà
-(Android/iPhone), gửi lệnh tới TV Sony (IRCC, Wake-on-LAN) và điều khiển Box qua ADB tới 127.0.0.1.
-Trang github.io chỉ là bản xem thử; nó hỏi IP Box rồi chuyển sang địa chỉ thật.
+TVRemote Native 2.0
+====================
 
-NÚT NGUỒN ĐỎ: Box đang sáng -> tắt TV rồi cho Box ngủ. Box đang ngủ -> đánh thức Box, bật TV, chờ TV lên rồi chọn cổng
-(mặc định HDMI 2, đổi trong Cài đặt). Nút TV (trái trên) chỉ bật/tắt riêng TV.
-Tuỳ chọn "TV tự bật/tắt theo Box": Box sáng/tắt màn hình bằng cách khác (remote vật lý...) thì TV cũng theo.
+Mục tiêu:
+- Ứng dụng Android native chạy trực tiếp trên Samsung Galaxy S20 5G.
+- Không dùng WebView, HTML, Chrome hoặc GitHub Pages trong giao diện điều khiển.
+- S20 điều khiển Sony BRAVIA qua Sony IRCC/Wake-on-LAN.
+- S20 điều khiển Android TV Box AK312 qua ADB TCP/IP.
 
-TỰ TÌM TV: lần đầu (chưa lưu IP) hoặc khi TV không trả lời, app kiểm tra IP/MAC đã lưu còn trong Wi-Fi không;
-nếu không thì quét mạng /24, tìm TV Sony, lưu IP + MAC (MAC đọc từ bảng ARP, Box Android 7 đọc được).
-Nút "Tự tìm TV" trong Cài đặt để quét lại. Không tìm được thì nhập tay IP/MAC.
+Giao diện hiện có:
+- Tab Điều khiển: Scene nguồn, TV Power, HDMI 1/2, âm lượng TV/Box, Mute, D-pad, OK, Back, Home, Exit, mở ứng dụng tìm kiếm, giọng nói.
+- Tab Bàn phím: phím số và các phím điều hướng kênh.
+- Tab Cài đặt: IP TV, IP Box, Sony PSK, MAC TV, lưu cấu hình, kiểm tra ADB.
+- Foreground Service, thông báo thường trực, giữ Wi-Fi/WakeLock, nhận BOOT_COMPLETED.
 
-CÀI ĐẶT
-1) Up TOÀN BỘ thư mục lên GitHub (cả .github và android; xoá thư mục bridge cũ nếu còn). Tab Actions > build-apk tự build,
-   TVRemote.apk nằm ở Releases > "apk-latest".
-2) Cài APK lên Box, mở 1 lần, bấm "Bỏ tối ưu pin"; cho phép tự khởi động nếu firmware có mục này.
-3) Box: bật Gỡ lỗi USB + ADB qua mạng (cổng 5555). Lần đầu TV hiện hộp thoại ADB: chọn "Luôn cho phép".
-   ADB loopback cần firmware Box đã bật ADB TCP trên localhost; APK không yêu cầu quyền root.
-4) TV Sony: bật IP Control (PSK nếu muốn), bật "Khởi động từ xa" để bật TV từ standby.
-5) Điện thoại: mở http://IP-box:8765 > Add to Home screen > tab Cài đặt: Tự tìm TV, PSK, cổng HDMI > Lưu.
+Thiết lập sau khi cài:
+1. Kết nối S20 và AK312 vào cùng mạng Wi-Fi.
+2. Trong app, mở Cài đặt, nhập IP Box (mặc định 127.0.0.1 nên cần đổi thành IP thật của AK312, ví dụ 192.168.1.233).
+3. Nhập IP Sony nếu tự dò chưa tìm thấy (ví dụ 192.168.1.234).
+4. Bấm Kiểm tra ADB. Lần đầu, nếu Box hiện hộp thoại RSA thì chọn Always allow from this computer và Allow.
+5. Cấu hình Sony IP Control/PSK nếu TV yêu cầu.
 
-
-CAP NHAT v2 - CHAY NEN / POWER SONY / VOICE
-1. APK TVRemote tren Android Box:
-   - Dich vu BridgeService chay foreground, co thong bao "TVRemote dang chay".
-   - Bam Back tai man hinh APK se thu nho ung dung xuong nen, khong dong Activity.
-   - Neu firmware tu dong diet app khi vuot Recent, dich vu co hen gio yeu cau khoi dong lai.
-   - Trong Android Box, vao Cai dat > Ung dung > TVRemote > Pin va cho phep khong toi uu pin neu firmware co muc nay.
-   - Khong bam Force stop. Force stop se chan service va receiver khoi dong lai cho den khi mo app thu cong.
-   - Tat/bo qua toi uu pin va cho phep tu khoi dong neu firmware Box co cac tuy chon nay.
-
-2. Giao dien web:
-   - Trang web tren dien thoai la bo dieu khien. Neu dong tab/trinh duyet hoan toan, giao dien khong the tu chay ngam nhu APK native.
-   - Tuy nhien BridgeService tren Box van tiep tuc chay va lang nghe cong 8765; mo lai http://IP-BOX:8765 de tiep tuc dieu khien.
-   - Tren Android, co the them trang vao man hinh chinh (PWA) de mo nhu ung dung rieng. PWA khong thay the Foreground Service.
-
-3. Nut TV:
-   - Dung ma IRCC Power chuan cua Sony de toggle bat/tat.
-   - Khi TV bao standby, gui Wake-on-LAN truoc roi gui Power.
-   - Neu TV khong phan hoi trang thai qua /sony/system, lenh Power van duoc gui; khong the bao dam trang thai bat/tat neu TV/firmware chan phan hoi.
-
-4. Voice:
-   - Nhan dang giong noi cua trinh duyet can HTTPS va trinh duyet ho tro SpeechRecognition.
-   - Dia chi http://IP-BOX:8765 la HTTP noi bo, co the bi Android Chrome chan microphone SpeechRecognition.
-   - Khi khong du dieu kien, TVRemote mo san o nhap va hien huong dan dung nut micro tren ban phim Android (Gboard).
-   - Tren iPhone/Safari, ho tro Web Speech API co the khac nhau; neu khong co, dung micro cua ban phim iOS.
-
-
-CAP NHAT v3 - POWER BOX 2 TRANG THAI / GIU DICH VU
-- Nút nguồn đỏ: nếu màn hình Box đang sáng, TV được đưa về standby trước, sau đó Box chỉ sleep màn hình (KEYCODE_SLEEP 223). Không dùng KEYCODE_POWER dự phòng vì phím này là toggle và có thể bật màn hình lại.
-- Bấm nút đỏ lần nữa: gửi KEYCODE_WAKEUP 224 để đánh thức màn hình Box, đợi 1,2 giây rồi bật TV và chuyển HDMI đã chọn.
-- Khi TV đã standby, lệnh tắt sẽ không gửi thêm Power toggle. Khi TV đã active, mới gửi Power để tắt. Khi không đọc được trạng thái, không gửi lệnh mù để tránh bật nhầm TV đang ngủ.
-- Bỏ xử lý screen-on/off trùng trong 10 giây sau khi nút nguồn chủ động thay đổi trạng thái Box.
-- BridgeService tiếp tục chạy foreground, giữ partial wake lock và Wi-Fi lock. Nếu firmware Box tự tắt Wi-Fi khi sleep, remote qua mạng có thể tạm thời không kết nối được; cần bật chế độ sleep giữ mạng trong cài đặt Box/router nếu có.
-- Voice Search vẫn mở ứng dụng tìm kiếm đã chọn trên Box sau khi nhận được câu nói. Việc mở YouTube/SmartTube sẽ thay giao diện đang hiển thị trên Box nhưng không dừng BridgeService. Giao diện điều khiển trên điện thoại vẫn dùng được. Nếu trình duyệt không hỗ trợ SpeechRecognition hoặc đang dùng HTTP LAN, hãy dùng micro của bàn phím điện thoại để nhập câu nói vào ô tìm kiếm.
-
-
-CAP NHAT v4 - DIEU KHIEN BOX LOCAL ROOT
-- Khong dung Dadb/ADB ket noi nguoc ve 127.0.0.1:5555 de dieu khien chinh Android Box nua.
-- Cac nut phim, volume, power, go text, voice search va scene sleep/wakeup chay lenh local bang `su -c` tren chinh Box.
-- Muc dich: tranh ADB loopback lam roi/ket thuc process TVRemote khi Box tu nhan key event hoac mo ung dung khac.
-- Tat ca API Box bat Exception va tra JSON loi thay vi de loi vuot ra HTTP server.
-- Firmware can cap quyen root cho TVRemote. Neu `su` khong cap quyen, xem hop thoai xin quyen root va chon Allow/Grant. Khong can bat ADB TCP cho cac lenh local nua.
-- Nut HOME/BACK co the dua Activity giao dien ra nen theo hanh vi Android; BridgeService foreground van tiep tuc. Lenh POWER va SLEEP co the lam man hinh Box tat, nhung dich vu nen can con song.
-- versionCode 4 / versionName 1.3.
-
-
-CAP NHAT v6 - ADB KHONG ROOT / QUYEN CHAY NEN / UPDATE TRONG APK
-- Loai bo toan bo lenh `su`; firmware tu choi su khong con gay loi.
-- Dieu khien Box quay lai Dadb/ADB loopback 127.0.0.1:5555. Box phai co ADB qua mang tren localhost hoat dong; neu khong, app hien loi ADB va can bat ADB TCP trong firmware.
-- Man hinh APK co nut CHAY NGAM – VE HOME, CAP QUYEN CHAY NEN, KHOI DONG LAI DICH VU, KIEM TRA ADB BOX, CAP NHAT TVREMOTE.
-- Cap quyen chay nen mo man hinh mien toi uu pin (neu Android ho tro) va trang thong tin ung dung de nguoi dung bat tu khoi dong/chay nen neu firmware co.
-- Update tai APK tu URL co dinh cua GitHub Releases do nguoi dung cung cap, dung DownloadManager; sau khi tai xong mo package installer. Nguoi dung phai cho phep cai nguon nay va xac nhan cai dat.
-- Neu Android 8+, vao Settings > Install unknown apps va cho phep TVRemote. Android 7 co the hien yeu cau Unknown sources.
-- Cap nhat chi cai de len neu APK moi cung applicationId va cung certificate ky so voi APK hien tai. Neu khac chu ky, Android se tu choi update va can go ban cu truoc (co the mat config).
-- Android khong cho tu cai im lang bang app thong thuong. Nut Update chi tai va mo trinh cai dat de nguoi dung xac nhan.
-- versionCode 6 / versionName 1.5.
-
-
-LƯU Ý BẢN 1.5: Các ghi chú "CAP NHAT v4 - LOCAL ROOT" phía trên đã lỗi thời. Bản 1.5 bỏ su hoàn toàn và quay lại ADB loopback 127.0.0.1:5555. Chỉ làm theo mục CAP NHAT v6.
-
-
-CAP NHAT v1.6 - TOI UU CHO AK312_ATV7 ANDROID 7.1.2 (API 25)
-- Giao dien APK co trang quan ly chay nen: hien trang thai service (best-effort), tinh trang mien toi uu pin va receiver khoi dong.
-- Nut Bo toi uu pin goi ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS; neu firmware khong co man hinh yeu cau thi mo danh sach bo toi uu pin.
-- Nut Quan ly ung dung mo App Details; tai day co the co Battery/Autostart tuy firmware. Nut Cai dat he thong mo Settings chung.
-- Android 7 khong co API chuan cho Auto-start cua hang san xuat. TVRemote da khai bao BOOT_COMPLETED va QUICKBOOT_POWERON; neu firmware chan third-party autostart thi can cho phep trong menu rieng cua firmware neu co.
-- Service khai bao stopWithTask=false, START_STICKY, Foreground notification, PARTIAL_WAKE_LOCK, Wi-Fi lock va BootReceiver. Khong dam bao song neu Force Stop, firmware kill, reboot khong gui broadcast hoac mat nguon.
-- VersionCode 7 / versionName 1.6.
-
-
-CAP NHAT v1.7 - FIX BUILD ACTIONS #7
-- Them import android.content.pm.PackageManager cho MainActivity, sua loi compile Kotlin: Unresolved reference PackageManager tai Main.kt dong 429.
-- Tang versionCode 8 / versionName 1.7 de co the cap nhat de len ban 1.6.
+Lưu ý:
+- Android có thể yêu cầu xác nhận RSA ADB lần đầu.
+- Nhận dạng giọng nói phụ thuộc dịch vụ Speech Recognition đã cài trên S20.
+- Mã nguồn này chưa được build thành APK trong môi trường hiện tại vì không có Gradle/Android SDK. Có thể build bằng GitHub Actions workflow trong .github/workflows/build-apk.yml hoặc Android Studio.
+- Không thể cài APK im lặng trên Android thông thường; Android sẽ hiển thị trình cài đặt để người dùng xác nhận.
