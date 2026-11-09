@@ -47,6 +47,7 @@ object Tv {
         try {
             c.connectTimeout = timeoutMs; c.readTimeout = timeoutMs; c.requestMethod = "POST"; c.doOutput = true
             if (Cfg["psk"].isNotEmpty()) c.setRequestProperty("X-Auth-PSK", Cfg["psk"])
+            c.setRequestProperty("Connection", "close")
             h.forEach { (k, v) -> c.setRequestProperty(k, v) }
             c.outputStream.use { it.write(body.toByteArray()) }
             val code = c.responseCode
@@ -70,7 +71,7 @@ object Tv {
         return when (v) {
             is JSONObject -> {
                 val direct = v.optString("status", "")
-                if (direct.isNotBlank() && direct != "null") direct.lowercase()
+                if (direct.equals("active", true) || direct.equals("standby", true)) direct.lowercase()
                 else v.keys().asSequence().mapNotNull { findStatus(v.opt(it)).takeIf(String::isNotEmpty) }.firstOrNull().orEmpty()
             }
             is org.json.JSONArray -> (0 until v.length()).asSequence().mapNotNull { findStatus(v.opt(it)).takeIf(String::isNotEmpty) }.firstOrNull().orEmpty()
@@ -78,25 +79,120 @@ object Tv {
             else -> ""
         }
     }
-    fun status(): String = try {
-        val json = JSONObject(http("/sony/system", PS, mapOf("Content-Type" to "application/json"), 1800))
-        findStatus(json.opt("result"))
-    } catch (e: Exception) { "" }
-    fun diag(): String = try { "OK · " + http("/sony/system", PS, mapOf("Content-Type" to "application/json")) } catch (e: Exception) { "Không kết nối được (${e.message})" }
-    // Nút nguồn trên điều khiển là lệnh toggle trực tiếp; không phụ thuộc API đọc trạng thái.
-    fun power() = ircc(codes["power"]!!)
-    fun on(assumeOff: Boolean = false) {
+    private fun jsonRequest(method: String, params: String = "[]", timeoutMs: Int = 2500): JSONObject {
+        val body = """{"method":"$method","id":1,"params":$params,"version":"1.0"}"""
+        val raw = http("/sony/system", body, mapOf("Content-Type" to "application/json; charset=UTF-8"), timeoutMs)
+        val result = JSONObject(raw)
+        val error = result.optJSONArray("error")
+        if (error != null && error.length() > 0) {
+            val item = error.opt(1)?.toString() ?: error.toString()
+            throw Exception("$method bị TV từ chối: $item")
+        }
+        return result
+    }
+    fun status(): String = try { findStatus(jsonRequest("getPowerStatus").opt("result")) } catch (e: Exception) { "" }
+    fun diag(): String = try {
+        val st = status().ifEmpty { "không đọc được" }
+        val keys = try {
+            val raw = jsonRequest("getRemoteControllerInfo").opt("result")
+            listOf("Power", "PowerOff", "PowerOn", "WakeUp").mapNotNull { key ->
+                findRemoteCode(raw, setOf(key))?.let { "$key=$it" }
+            }.joinToString("; ").ifEmpty { "không công bố mã nguồn riêng" }
+        } catch (e: Exception) { "API remote info không hỗ trợ: ${e.message}" }
+        "TV ${Cfg["sonyIp"]}: trạng thái=$st\nIRCC/REST: kết nối được\nMã nguồn TV: $keys"
+    } catch (e: Exception) { "Không kết nối được (${e.message})" }
+    fun wol(): Boolean {
+        val m = Cfg["tvMac"].replace(Regex("[^0-9a-fA-F]"), "")
+        if (m.length != 12) return false
+        val mac = ByteArray(6) { m.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+        val packet = ByteArray(102)
+        for (i in 0 until 6) packet[i] = 0xFF.toByte()
+        for (i in 0 until 16) System.arraycopy(mac, 0, packet, 6 + i * 6, 6)
+        val broadcast = Cfg["sonyIp"].substringBeforeLast('.', "").let { if (it.isNotEmpty()) "$it.255" else "255.255.255.255" }
+        DatagramSocket().use { socket ->
+            socket.broadcast = true
+            for (address in listOf("255.255.255.255", broadcast)) {
+                for (port in listOf(9, 7)) {
+                    try { socket.send(DatagramPacket(packet, packet.size, InetAddress.getByName(address), port)) } catch (_: Exception) {}
+                }
+            }
+        }
+        return true
+    }
+    private fun setPowerStatus(on: Boolean) {
+        jsonRequest("setPowerStatus", """[{"status":$on}]""", 4500)
+    }
+    private fun findRemoteCode(v: Any?, wanted: Set<String>): String? {
+        return when (v) {
+            is JSONObject -> {
+                val name = v.optString("name", "")
+                val code = v.optString("value", "")
+                if (wanted.any { it.equals(name, true) } && code.isNotBlank()) code
+                else v.keys().asSequence().mapNotNull { findRemoteCode(v.opt(it), wanted) }.firstOrNull()
+            }
+            is org.json.JSONArray -> (0 until v.length()).asSequence().mapNotNull { findRemoteCode(v.opt(it), wanted) }.firstOrNull()
+            else -> null
+        }
+    }
+    private fun modelPowerCode(names: Set<String>): String? = try {
+        findRemoteCode(jsonRequest("getRemoteControllerInfo").opt("result"), names)
+    } catch (e: Exception) { null }
+    private fun sendPowerOff() {
+        try {
+            setPowerStatus(false)
+            return
+        } catch (restError: Exception) {
+            val discrete = modelPowerCode(setOf("PowerOff", "Power off", "PowerOffKey"))
+            if (discrete != null) {
+                ircc(discrete)
+                return
+            }
+            if (status() == "active") {
+                ircc(codes["power"]!!)
+                return
+            }
+            throw Exception("Không tắt được TV bằng REST API hoặc IRCC. ${restError.message}")
+        }
+    }
+    private fun sendPowerOn() {
+        try {
+            setPowerStatus(true)
+            return
+        } catch (restError: Exception) {
+            val discrete = modelPowerCode(setOf("PowerOn", "Power on", "WakeUp"))
+            if (discrete != null) {
+                ircc(discrete)
+                return
+            }
+            if (status() == "standby") {
+                ircc(codes["power"]!!)
+                return
+            }
+            throw Exception("Không bật được TV bằng REST API hoặc IRCC. ${restError.message}")
+        }
+    }
+    // Nút nguồn là toggle có kiểm tra trạng thái; dùng REST API nguồn trước, IRCC làm dự phòng.
+    fun power() {
         when (status()) {
-            "active" -> return
-            "standby" -> ircc(codes["power"]!!)
-            else -> if (assumeOff) ircc(codes["power"]!!) else throw Exception("Không đọc được trạng thái TV; kiểm tra IP Control/PSK")
+            "active" -> sendPowerOff()
+            "standby" -> { wol(); sendPowerOn() }
+            else -> {
+                // Khi API trạng thái không trả lời, gửi IRCC Power đúng mã Sony chuẩn.
+                ircc(codes["power"]!!)
+            }
+        }
+    }
+    fun on(assumeOff: Boolean = false) {
+        if (status() == "active") return
+        wol()
+        try { sendPowerOn() } catch (e: Exception) {
+            if (assumeOff) ircc(codes["power"]!!) else throw e
         }
     }
     fun off(assumeOn: Boolean = false) {
-        when (status()) {
-            "standby" -> return
-            "active" -> ircc(codes["power"]!!)
-            else -> if (assumeOn) ircc(codes["power"]!!) else throw Exception("Không đọc được trạng thái TV; kiểm tra IP Control/PSK")
+        if (status() == "standby") return
+        try { sendPowerOff() } catch (e: Exception) {
+            if (assumeOn) ircc(codes["power"]!!) else throw e
         }
     }
     fun selectConfiguredHdmi() { ircc(codes[Cfg["hdmi"]] ?: codes["hdmi1"]!!) }
@@ -341,7 +437,8 @@ class MainActivity : Activity() {
     private fun renderTab() { tabArea.removeAllViews(); when(selectedTab) {
         0 -> {
             row(tabArea,"⏻ NGUỒN / SCENE" to { action("Nguồn TV + Box") { Scene.toggle(this) } })
-            row(tabArea,"TV NGUỒN" to { action("TV Power") { Tv.power() } },"HDMI 1 ⇄ 2" to { action("Chuyển HDMI") { Tv.toggleHdmi() } })
+            row(tabArea,"TV NGUỒN" to { action("TV Power") { Tv.power() } },"TV TẮT" to { action("TV Tắt") { Tv.off() } },"TV BẬT" to { action("TV Bật") { Tv.on() } })
+            row(tabArea,"HDMI 1 ⇄ 2" to { action("Chuyển HDMI") { Tv.toggleHdmi() } })
             row(tabArea,"TV VOL +" to { action("TV Vol+") { Tv.ircc(Tv.codes["volUp"]!!) } },"TV VOL −" to { action("TV Vol-") { Tv.ircc(Tv.codes["volDown"]!!) } },"TV MUTE" to { action("TV Mute") { Tv.ircc(Tv.codes["mute"]!!) } })
             row(tabArea,"BOX VOL +" to { action("Box Vol+") { Box.key("VOL+") } },"BOX VOL −" to { action("Box Vol-") { Box.key("VOL-") } },"BOX MUTE" to { action("Box Mute") { Box.key("MUTE") } })
             row(tabArea,"BACK" to { action("Back") { Box.key("BACK") } },"HOME" to { action("Home") { Box.key("HOME") } },"EXIT" to { action("Exit") { Box.key("EXIT") } })
