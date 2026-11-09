@@ -14,6 +14,7 @@ import dadb.Dadb
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.net.*
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -348,6 +349,81 @@ class MainActivity : Activity() {
             Adb.reset(); refreshStatus(); status.text="Đã lưu cấu hình thiết bị"
         })
         row(tabArea,"Kiểm tra ADB" to { action("ADB") { "ADB OK · "+Adb.sh("getprop ro.product.model") } },"Chạy nền" to { BridgeService.start(this); requestBatteryExemption() })
+        row(tabArea,"KIỂM TRA / CẬP NHẬT PHIÊN BẢN" to { updateApp() })
+    }
+    private fun updateApp() {
+        val url = "https://github.com/NDWoodCompany/TVRemote/releases/download/apk-latest/TVRemote.apk"
+        AlertDialog.Builder(this).setTitle("Cập nhật TVRemote")
+            .setMessage("Tải phiên bản TVRemote.apk mới nhất từ GitHub Releases?")
+            .setNegativeButton("Để sau", null)
+            .setPositiveButton("Cập nhật") { _, _ ->
+                status.text = "Đang tải TVRemote.apk từ GitHub..."
+                Thread {
+                    var conn: HttpURLConnection? = null
+                    try {
+                        val file = File(cacheDir, "TVRemote-update.apk")
+                        conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                            instanceFollowRedirects = true
+                            connectTimeout = 20000
+                            readTimeout = 30000
+                            requestMethod = "GET"
+                            setRequestProperty("Cache-Control", "no-cache")
+                        }
+                        conn.connect()
+                        if (conn.responseCode != HttpURLConnection.HTTP_OK)
+                            throw Exception("GitHub trả HTTP ${conn.responseCode}")
+                        val length = conn.contentLengthLong
+                        conn.inputStream.use { input ->
+                            FileOutputStream(file).use { output ->
+                                val buffer = ByteArray(64 * 1024)
+                                var total = 0L
+                                while (true) {
+                                    val n = input.read(buffer)
+                                    if (n < 0) break
+                                    output.write(buffer, 0, n)
+                                    total += n
+                                    if (length > 0) {
+                                        val percent = (total * 100 / length).toInt()
+                                        runOnUiThread { status.text = "Đang tải cập nhật: $percent%" }
+                                    }
+                                }
+                            }
+                        }
+                        if (file.length() < 100_000) throw Exception("File tải về quá nhỏ, có thể GitHub chưa có APK")
+                        file.inputStream().use { input ->
+                            val magic = ByteArray(2)
+                            if (input.read(magic) != 2 || magic[0] != 0x50.toByte() || magic[1] != 0x4B.toByte())
+                                throw Exception("File tải về không phải APK hợp lệ")
+                        }
+                        runOnUiThread {
+                            try {
+                                if (Build.VERSION.SDK_INT >= 26 &&
+                                    !packageManager.canRequestPackageInstalls()) {
+                                    status.text = "Cần cho phép TVRemote cài ứng dụng không rõ nguồn"
+                                    startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                        Uri.parse("package:$packageName")))
+                                    Toast.makeText(this, "Cho phép cài đặt rồi quay lại bấm cập nhật lần nữa", Toast.LENGTH_LONG).show()
+                                    return@runOnUiThread
+                                }
+                                val uri = androidx.core.content.FileProvider.getUriForFile(
+                                    this, "$packageName.provider", file)
+                                val install = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+                                    data = uri
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                startActivity(install)
+                                status.text = "Đã tải APK; xác nhận cài đặt trong Android"
+                            } catch (e: Exception) {
+                                status.text = "Không mở được trình cài đặt: ${e.message}"
+                            }
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread { status.text = "Cập nhật thất bại: ${e.message}" }
+                    } finally {
+                        conn?.disconnect()
+                    }
+                }.start()
+            }.show()
     }
     private fun voice() { try { val i=Intent("android.speech.action.RECOGNIZE_SPEECH").putExtra("android.speech.extra.LANGUAGE","vi-VN").putExtra("android.speech.extra.LANGUAGE_MODEL","free_form").putExtra("android.speech.extra.PROMPT","Nói nội dung cần tìm trên YouTube"); startActivityForResult(i,41) } catch(e:Exception) { status.text="Thiết bị chưa có dịch vụ nhận dạng giọng nói tiếng Việt" } }
     override fun onActivityResult(req:Int,res:Int,data:Intent?) { super.onActivityResult(req,res,data); if(req==41 && res==RESULT_OK) { val q=data?.getStringArrayListExtra("android.speech.extra.RESULTS")?.firstOrNull().orEmpty(); if(q.isNotBlank()) action("Tìm kiếm: $q") { Box.search(q) } } }
