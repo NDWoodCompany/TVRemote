@@ -170,7 +170,7 @@ object Scene {
         busy = true
         err = ""
         lastCommandAt = System.currentTimeMillis()
-        try {
+        return try {
             when (Tv.status()) {
                 "active" -> {
                     Tv.off()
@@ -211,13 +211,13 @@ object Adb {
     @Synchronized fun sh(cmd: String): String {
         try { return conn().shell(cmd).allOutput.trim() } catch (e: Exception) { reset() }
         try { return conn().shell(cmd).allOutput.trim() } catch (e: Exception) {
-            throw Exception("ADB lỗi – bật ADB qua mạng trên Box và chọn \"Luôn cho phép\" trên màn hình TV (${e.message})")
+            throw Exception("ADB không kết nối được tới ${Cfg["boxIp"]}:${Cfg["adbPort"]}. Kiểm tra Box và điện thoại cùng Wi-Fi; bật ADB qua mạng/TCP 5555 trên Box; chấp nhận khóa RSA và chọn Luôn cho phép. Chi tiết: ${e.message}")
         }
     }
 }
 
 object Box {
-    val KEY = mutableMapOf("UP" to 19, "DOWN" to 20, "LEFT" to 21, "RIGHT" to 22, "OK" to 23, "BACK" to 4, "EXIT" to 3, "HOME" to 3,
+    val KEY = mutableMapOf("UP" to 19, "DOWN" to 20, "LEFT" to 21, "RIGHT" to 22, "OK" to 23, "BACK" to 4, "EXIT" to 111, "HOME" to 3,
         "POWER" to 26, "VOL+" to 24, "VOL-" to 25, "MUTE" to 164, "*" to 17, "#" to 18).also { for (i in 0..9) it["$i"] = 7 + i }
     private fun q(s: String) = "'" + s.replace("'", "'\\''") + "'"
     fun text(t: String, enter: Boolean) {
@@ -327,7 +327,7 @@ class MainActivity : Activity() {
         val tv = Tv.diag()
         val box = try { "OK · " + Adb.sh("getprop ro.product.model").ifBlank { "ADB đã kết nối" } }
                    catch (e: Exception) { "LỖI · ${e.message}" }
-        "TV: $tv\\nBox: $box"
+        "TV: $tv\nBox: $box"
     }
     private fun refreshStatus() { status.text="TV: ${Cfg["sonyIp"].ifEmpty { "chưa tìm thấy" }}   ·   Box: ${Cfg["boxIp"]}:${Cfg["adbPort"]}\nDịch vụ điều khiển đang chạy trên điện thoại" }
     private fun settingsUi() {
