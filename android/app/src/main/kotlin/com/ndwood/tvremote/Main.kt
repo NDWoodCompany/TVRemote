@@ -2,7 +2,6 @@ package com.ndwood.tvremote
 
 import android.app.*
 import android.content.*
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.*
@@ -12,7 +11,6 @@ import android.view.Gravity
 import dadb.AdbKeyPair
 import dadb.Dadb
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.net.*
@@ -23,7 +21,7 @@ object Cfg {
     lateinit var sp: SharedPreferences
     fun init(c: Context) { if (!::sp.isInitialized) sp = c.getSharedPreferences("cfg", 0) }
     private val def = mapOf("sonyIp" to "", "psk" to "", "tvMac" to "", "boxIp" to "",
-        "adbPort" to "5555", "searchApp" to "com.teamsmart.videomanager.tv", "follow" to "0", "hdmi" to "hdmi2")
+        "adbPort" to "5555", "searchApp" to "com.teamsmart.videomanager.tv", "hdmi" to "hdmi2")
     val keys: Set<String> get() = def.keys
     operator fun get(k: String): String = sp.getString(k, def[k] ?: "") ?: ""
     operator fun set(k: String, v: String) { sp.edit().putString(k, v).apply() }
@@ -37,8 +35,8 @@ fun myIp(): String = try {
 // ---------- Sony BRAVIA (IRCC + Wake-on-LAN) ----------
 object Tv {
     private fun ir(id: Int) = "AAAAAQAAAAEAAAA" + (65 + id).toChar() + "Aw=="
-    val codes = mutableMapOf("power" to ir(21), "wake" to ir(46), "off" to ir(47), "input" to ir(37), "tv" to ir(36),
-        "volUp" to ir(18), "volDown" to ir(19), "mute" to ir(20), "chUp" to ir(16), "chDown" to ir(17),
+    val codes = mutableMapOf("power" to ir(21),
+        "volUp" to ir(18), "volDown" to ir(19), "mute" to ir(20),
         "hdmi1" to "AAAAAgAAABoAAABaAw==", "hdmi2" to "AAAAAgAAABoAAABbAw==",
         "hdmi3" to "AAAAAgAAABoAAABcAw==", "hdmi4" to "AAAAAgAAABoAAABdAw==").also { for (i in 0..9) it["num$i"] = ir((i + 9) % 10) }
     const val PS = """{"method":"getPowerStatus","id":1,"params":[],"version":"1.0"}"""
@@ -71,17 +69,6 @@ object Tv {
         JSONObject(http("/sony/system", PS, mapOf("Content-Type" to "application/json"))).optJSONArray("result")?.optJSONObject(0)?.optString("status") ?: ""
     } catch (e: Exception) { "" }
     fun diag(): String = try { "OK · " + http("/sony/system", PS, mapOf("Content-Type" to "application/json")) } catch (e: Exception) { "Không kết nối được (${e.message})" }
-    fun wol(): Boolean {
-        val m = Cfg["tvMac"].replace(Regex("[^0-9a-fA-F]"), ""); if (m.length != 12) return false
-        val mac = ByteArray(6) { m.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
-        val p = ByteArray(6) { 0xFF.toByte() } + ByteArray(96).also { for (i in 0 until 16) mac.copyInto(it, i * 6) }
-        DatagramSocket().use { s ->
-            s.broadcast = true
-            for (a in listOf("255.255.255.255", Cfg["sonyIp"].replaceFirst(Regex("\\d+$"), "255")))
-                try { s.send(DatagramPacket(p, p.size, InetAddress.getByName(a), 9)) } catch (e: Exception) {}
-        }
-        return true
-    }
     // Power là lệnh toggle. Chỉ gửi khi đã xác định được trạng thái để tránh bật nhầm/tắt nhầm.
     fun power() {
         when (status()) {
@@ -179,35 +166,30 @@ object Scene {
         Tv.ircc(Tv.codes[Cfg["hdmi"]] ?: Tv.codes["hdmi2"]!!)
     }
     @Synchronized fun toggle(c: Context): String {
-        if (busy) return "Đang xử lý…"
+        if (busy) throw Exception("Đang xử lý lệnh trước đó")
         busy = true
         err = ""
         lastCommandAt = System.currentTimeMillis()
-        val tvState = Tv.status()
-        val wasAwake = tvState == "active"
-        Thread {
-            try {
-                if (wasAwake) {
-                    // Tắt TV trước, sau đó chỉ đưa màn hình Box vào sleep.
-                    // Không gửi KEYCODE_POWER dự phòng vì đó là phím toggle, có thể bật màn hình lại.
-                    try { Tv.off() } catch (e: Exception) { err = "TV: " + (e.message ?: "Không gửi được lệnh tắt") }
+        try {
+            when (Tv.status()) {
+                "active" -> {
+                    Tv.off()
                     Thread.sleep(900)
-                    try { Adb.sh("input keyevent 223") } catch (e: Exception) { err += " · Box: " + (e.message ?: "Không sleep được") }
-                } else {
-                    // Đánh thức màn hình Box trước, đợi hệ thống và Wi-Fi/ADB ổn định rồi bật TV.
+                    Adb.sh("input keyevent 223")
+                    "Đã gửi lệnh tắt TV và đưa Box vào chế độ ngủ"
+                }
+                "standby" -> {
                     Adb.sh("input keyevent 224")
                     Thread.sleep(1200)
                     tvOn()
+                    "Đã đánh thức Box và bật TV"
                 }
-            } catch (e: Exception) {
-                err = e.message ?: "Lỗi điều khiển"
-            } finally {
-                lastCommandAt = System.currentTimeMillis()
-                Thread.sleep(1200)
-                busy = false
+                else -> throw Exception("Không đọc được trạng thái TV. Kiểm tra kết nối Sony trước khi chạy Scene")
             }
-        }.start()
-        return if (wasAwake) "Đang tắt TV rồi đưa Box vào chế độ ngủ" else "Đang đánh thức Box rồi bật TV"
+        } finally {
+            lastCommandAt = System.currentTimeMillis()
+            busy = false
+        }
     }
 }
 
@@ -311,7 +293,17 @@ class MainActivity : Activity() {
     private fun label(t: String, size: Float = 15f) = TextView(this).apply { text=t; textSize=size; setTextColor(fg); gravity=Gravity.CENTER; setPadding(dp(6),dp(8),dp(6),dp(8)) }
     private fun button(t: String, action: () -> Unit): Button = Button(this).apply { text=t; isAllCaps=false; textSize=15f; setTextColor(fg); setBackgroundTintList(android.content.res.ColorStateList.valueOf(panel)); setOnClickListener { action() } }
     private fun row(parent: LinearLayout, vararg items: Pair<String, () -> Unit>) { val r=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER; weightSum=items.size.toFloat() }; items.forEach { (t,a) -> r.addView(button(t,a), LinearLayout.LayoutParams(0,dp(58),1f).apply { setMargins(dp(3),dp(3),dp(3),dp(3)) }) }; parent.addView(r) }
-    private fun action(name: String, block: () -> Unit) { Thread { val result=try { block(); "Đã gửi: $name" } catch(e:Exception) { "Lỗi $name: ${e.message}" }; runOnUiThread { status.text=result } }.start() }
+    private fun action(name: String, block: () -> Any?) {
+        status.text = "Đang thực hiện: $name…"
+        Thread {
+            val result = try {
+                val value = block()
+                if (value == null || value === Unit || value.toString().isBlank()) "Đã gửi: $name"
+                else value.toString()
+            } catch (e: Exception) { "Lỗi $name: ${e.message}" }
+            runOnUiThread { status.text = result }
+        }.start()
+    }
     private fun buildUi() {
         root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(bg); setPadding(dp(12),dp(8),dp(12),dp(8)) }
         val head=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; gravity=Gravity.CENTER_VERTICAL }
@@ -325,13 +317,18 @@ class MainActivity : Activity() {
         setContentView(root); renderTab(); refreshStatus()
     }
     private fun renderTab() { tabArea.removeAllViews(); when(selectedTab) {
-        0 -> { row(tabArea,"⏻ NGUỒN / SCENE" to { action("Scene") { Scene.toggle(this) } }); row(tabArea,"TV Power" to { action("TV Power") { Tv.power() } },"HDMI 1" to { action("HDMI 1") { Tv.ircc(Tv.codes["hdmi1"]!!) } },"HDMI 2" to { action("HDMI 2") { Tv.ircc(Tv.codes["hdmi2"]!!) } }); row(tabArea,"TV Vol +" to { action("TV Vol+") { Tv.ircc(Tv.codes["volUp"]!!) } },"TV Vol −" to { action("TV Vol-") { Tv.ircc(Tv.codes["volDown"]!!) } },"TV Mute" to { action("TV Mute") { Tv.ircc(Tv.codes["mute"]!!) } }); row(tabArea,"Box Vol +" to { action("Box Vol+") { Box.key("VOL+") } },"Box Vol −" to { action("Box Vol-") { Box.key("VOL-") } },"Box Mute" to { action("Box Mute") { Box.key("MUTE") } }); row(tabArea,"BACK" to { action("Back") { Box.key("BACK") } },"HOME" to { action("Home") { Box.key("HOME") } },"EXIT" to { action("Exit") { Box.key("EXIT") } }); val pad=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; gravity=Gravity.CENTER }; row(pad,"▲" to { action("Up") { Box.key("UP") } }); row(pad,"◀" to { action("Left") { Box.key("LEFT") } },"OK" to { action("OK") { Box.key("OK") } },"▶" to { action("Right") { Box.key("RIGHT") } }); row(pad,"▼" to { action("Down") { Box.key("DOWN") } }); tabArea.addView(pad); row(tabArea,"Mở YouTube" to { action("Mở ứng dụng tìm kiếm") { Box.open() } },"🎙 Giọng nói" to { voice() }) }
+        0 -> { row(tabArea,"⏻ NGUỒN / SCENE" to { action("Scene") { Scene.toggle(this) } }); row(tabArea,"TV Power" to { action("TV Power") { Tv.power() } },"TV TẮT" to { action("TV Tắt") { Tv.off() } },"HDMI 1" to { action("HDMI 1") { Tv.ircc(Tv.codes["hdmi1"]!!) } },"HDMI 2" to { action("HDMI 2") { Tv.ircc(Tv.codes["hdmi2"]!!) } }); row(tabArea,"TV Vol +" to { action("TV Vol+") { Tv.ircc(Tv.codes["volUp"]!!) } },"TV Vol −" to { action("TV Vol-") { Tv.ircc(Tv.codes["volDown"]!!) } },"TV Mute" to { action("TV Mute") { Tv.ircc(Tv.codes["mute"]!!) } }); row(tabArea,"Box Vol +" to { action("Box Vol+") { Box.key("VOL+") } },"Box Vol −" to { action("Box Vol-") { Box.key("VOL-") } },"Box Mute" to { action("Box Mute") { Box.key("MUTE") } }); row(tabArea,"BACK" to { action("Back") { Box.key("BACK") } },"HOME" to { action("Home") { Box.key("HOME") } },"EXIT" to { action("Exit") { Box.key("EXIT") } }); val pad=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; gravity=Gravity.CENTER }; row(pad,"▲" to { action("Up") { Box.key("UP") } }); row(pad,"◀" to { action("Left") { Box.key("LEFT") } },"OK" to { action("OK") { Box.key("OK") } },"▶" to { action("Right") { Box.key("RIGHT") } }); row(pad,"▼" to { action("Down") { Box.key("DOWN") } }); tabArea.addView(pad); row(tabArea,"Mở YouTube" to { action("Mở ứng dụng tìm kiếm") { Box.open() } },"🎙 Giọng nói" to { voice() }) }
         1 -> { row(tabArea,"1" to { sendKey("1") },"2" to { sendKey("2") },"3" to { sendKey("3") }); row(tabArea,"4" to { sendKey("4") },"5" to { sendKey("5") },"6" to { sendKey("6") }); row(tabArea,"7" to { sendKey("7") },"8" to { sendKey("8") },"9" to { sendKey("9") }); row(tabArea,"*" to { sendKey("*") },"0" to { sendKey("0") },"#" to { sendKey("#") }); row(tabArea,"CH +" to { action("Channel+") { Box.key("UP") } },"CH −" to { action("Channel-") { Box.key("DOWN") } }) }
         else -> settingsUi()
     } }
     private fun sendKey(k:String) = action("Phím $k") { Box.key(k) }
     private fun discover() = action("Tìm thiết bị") { val r=Disc.ensure(true); "Quét xong: $r · TV ${Cfg["sonyIp"]}".also { runOnUiThread { refreshStatus() } } }
-    private fun checkConnections() = action("Kiểm tra") { val tv=Tv.diag(); val box=Adb.sh("getprop ro.product.model"); "TV: $tv\nBox: $box" }
+    private fun checkConnections() = action("Kiểm tra TV + Box") {
+        val tv = Tv.diag()
+        val box = try { "OK · " + Adb.sh("getprop ro.product.model").ifBlank { "ADB đã kết nối" } }
+                   catch (e: Exception) { "LỖI · ${e.message}" }
+        "TV: $tv\\nBox: $box"
+    }
     private fun refreshStatus() { status.text="TV: ${Cfg["sonyIp"].ifEmpty { "chưa tìm thấy" }}   ·   Box: ${Cfg["boxIp"]}:${Cfg["adbPort"]}\nDịch vụ điều khiển đang chạy trên điện thoại" }
     private fun settingsUi() {
         fun field(title:String,key:String,hint:String=""): EditText { tabArea.addView(label(title).apply { gravity=Gravity.START }); val e=EditText(this).apply { setText(Cfg[key]); setSingleLine(true); setTextColor(fg); setHintTextColor(0xFF9AAAB5.toInt()); setHint(hint); setPadding(dp(12),0,dp(12),0); setBackgroundColor(panel) }; tabArea.addView(e,LinearLayout.LayoutParams(-1,dp(48))); return e }
@@ -348,7 +345,8 @@ class MainActivity : Activity() {
             Cfg["searchApp"]=search.text.toString().trim()
             Adb.reset(); refreshStatus(); status.text="Đã lưu cấu hình thiết bị"
         })
-        row(tabArea,"Kiểm tra ADB" to { action("ADB") { "ADB OK · "+Adb.sh("getprop ro.product.model") } },"Chạy nền" to { BridgeService.start(this); requestBatteryExemption() })
+        row(tabArea,"TEST TV + BOX" to { checkConnections() },"Kiểm tra ADB" to { action("ADB") { "ADB OK · "+Adb.sh("getprop ro.product.model") } })
+        row(tabArea,"Chạy nền" to { BridgeService.start(this); requestBatteryExemption() })
         row(tabArea,"KIỂM TRA / CẬP NHẬT PHIÊN BẢN" to { updateApp() })
     }
     private fun updateApp() {
