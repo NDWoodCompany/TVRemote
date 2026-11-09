@@ -62,9 +62,16 @@ object Tv {
     }
     // Gửi lệnh; nếu không tới được TV thì kiểm tra/quét lại IP rồi thử 1 lần nữa
     fun ircc(code: String) {
-        try { send(code) } catch (e: Exception) {
-            val r = Disc.ensure()
-            if (r == "moved" || r == "found") send(code) else throw e
+        try {
+            send(code)
+        } catch (first: Exception) {
+            // Nút bấm không được kích hoạt quét cả mạng (có thể mất 15-30 giây).
+            // Thử xác nhận IP hiện tại và gửi lại đúng một lần.
+            if (Cfg["sonyIp"].isBlank()) throw first
+            if (!Disc.isSony(Cfg["sonyIp"])) throw Exception("Không liên lạc được TV tại ${Cfg["sonyIp"]}; không tự quét toàn mạng. ${first.message}")
+            try { send(code) } catch (second: Exception) {
+                throw Exception("TV không nhận lệnh IRCC tại ${Cfg["sonyIp"]}. ${second.message}")
+            }
         }
     }
     private fun findStatus(v: Any?): String {
@@ -280,14 +287,14 @@ object Scene {
                 }
             }
             if (awake) {
-                // Khi Box đang thức, coi TV là màn hình đang sử dụng: TV ngủ trước, Box ngủ sau.
+                // Không cho Box ngủ nếu TV chưa nhận lệnh tắt.
                 Tv.off(assumeOn = true)
-                Thread.sleep(700)
+                Thread.sleep(500)
                 Box.sleep()
                 Cfg["sceneState"] = "sleep"
-                "Đã tắt TV trước, sau đó đưa TV Box vào chế độ ngủ"
+                "Đã gửi lệnh tắt TV, sau đó gửi lệnh ngủ TV Box"
             } else {
-                // Đánh thức Box trước; chỉ bật TV sau khi ADB phản hồi trở lại.
+                // WoL/ADB đánh thức Box trước; sau đó bật TV và chọn HDMI.
                 Box.wake()
                 Tv.on(assumeOff = true)
                 Tv.waitActive()
@@ -436,8 +443,8 @@ class MainActivity : Activity() {
     }
     private fun renderTab() { tabArea.removeAllViews(); when(selectedTab) {
         0 -> {
-            row(tabArea,"⏻ NGUỒN / SCENE" to { action("Nguồn TV + Box") { Scene.toggle(this) } })
-            row(tabArea,"TV NGUỒN" to { action("TV Power") { Tv.power() } },"TV TẮT" to { action("TV Tắt") { Tv.off() } },"TV BẬT" to { action("TV Bật") { Tv.on() } })
+            row(tabArea,"⏻ NGUỒN TV + BOX" to { action("Nguồn TV + Box") { Scene.toggle(this) } })
+            row(tabArea,"⏻ TV NGUỒN" to { action("TV Power") { Tv.power() } })
             row(tabArea,"HDMI 1 ⇄ 2" to { action("Chuyển HDMI") { Tv.toggleHdmi() } })
             row(tabArea,"TV VOL +" to { action("TV Vol+") { Tv.ircc(Tv.codes["volUp"]!!) } },"TV VOL −" to { action("TV Vol-") { Tv.ircc(Tv.codes["volDown"]!!) } },"TV MUTE" to { action("TV Mute") { Tv.ircc(Tv.codes["mute"]!!) } })
             row(tabArea,"BOX VOL +" to { action("Box Vol+") { Box.key("VOL+") } },"BOX VOL −" to { action("Box Vol-") { Box.key("VOL-") } },"BOX MUTE" to { action("Box Mute") { Box.key("MUTE") } })
