@@ -2,6 +2,7 @@ package com.ndwood.tvremote
 
 import android.app.*
 import android.content.*
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.*

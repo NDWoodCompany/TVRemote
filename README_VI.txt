@@ -90,3 +90,8 @@ CAP NHAT v1.6 - TOI UU CHO AK312_ATV7 ANDROID 7.1.2 (API 25)
 - Android 7 khong co API chuan cho Auto-start cua hang san xuat. TVRemote da khai bao BOOT_COMPLETED va QUICKBOOT_POWERON; neu firmware chan third-party autostart thi can cho phep trong menu rieng cua firmware neu co.
 - Service khai bao stopWithTask=false, START_STICKY, Foreground notification, PARTIAL_WAKE_LOCK, Wi-Fi lock va BootReceiver. Khong dam bao song neu Force Stop, firmware kill, reboot khong gui broadcast hoac mat nguon.
 - VersionCode 7 / versionName 1.6.
+
+
+CAP NHAT v1.7 - FIX BUILD ACTIONS #7
+- Them import android.content.pm.PackageManager cho MainActivity, sua loi compile Kotlin: Unresolved reference PackageManager tai Main.kt dong 429.
+- Tang versionCode 8 / versionName 1.7 de co the cap nhat de len ban 1.6.
