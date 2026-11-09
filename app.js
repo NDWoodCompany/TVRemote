@@ -2,10 +2,10 @@ const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const INS={tv:'TV',hdmi1:'HDMI 1',hdmi2:'HDMI 2',hdmi3:'HDMI 3',hdmi4:'HDMI 4',input:'Chuyển vòng'};
 const APPS={'com.teamsmart.videomanager.tv':'SmartTube','com.liskovsoft.smarttubetv.beta':'SmartTube Beta','com.google.android.youtube.tv':'YouTube (Android TV)','com.google.android.youtube':'YouTube (bản điện thoại)','':'Mặc định của Box (có thể hiện hộp chọn)'};
 const F=[['sonyIp','IP Sony BRAVIA'],['psk','Sony PSK (nếu TV đã đặt)','password'],['tvMac','MAC của TV (tùy chọn – để bật TV từ standby)'],['boxIp','IP Android Box'],['adbPort','Cổng ADB (mặc định 5555)']];
-let target='box',tt;
+let target='box',tt,BASE=localStorage.bridge||'';
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>e.classList.remove('show'),3000)}
 const st=t=>$('#st').textContent=t;
-async function api(p,b){let j;try{const r=await fetch('api/'+p,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});j=await r.json()}
+async function api(p,b){let j;try{const r=await fetch(BASE+'api/'+p,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});j=await r.json()}
 catch(e){$('#warn').hidden=false;toast('Không gọi được bridge');throw e}
 if(!j.ok){toast(j.error||'Lỗi');throw Error(j.error)}return j}
 const sendS=c=>api('sony',{cmd:c}),sendB=k=>api('box',{key:k});
@@ -41,10 +41,13 @@ $('#goOpen').onclick=()=>api('box/open',{}).then(()=>st('Đã mở app trên Box
 // cài đặt
 const fm=$('#form');fm.innerHTML=F.map(([k,l,t])=>`<label>${l}</label><input type="${t||'text'}" id="f_${k}" autocomplete="off">`).join('')+
 `<label>App dùng cho "Tìm trên Box"</label><select id="f_searchApp">${Object.entries(APPS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
+<label>TV tự bật/tắt theo Box (chỉ khi chạy bằng APK)</label><select id="f_follow"><option value="1">Bật</option><option value="0">Tắt</option></select>
 <label>Ngôn ngữ giọng nói (trình duyệt)</label><select id="f_lang"><option value="vi-VN">Tiếng Việt</option><option value="en-US">English</option></select>`;
 $('#f_lang').value=localStorage.lang||'vi-VN';
-api('config').then(({cfg})=>{F.forEach(([k])=>{if(k!=='psk')$('#f_'+k).value=cfg[k]??''});$('#f_psk').placeholder=cfg.pskSet?'(đã lưu – để trống nếu giữ nguyên)':'';$('#f_searchApp').value=cfg.searchApp}).catch(()=>{});
-$('#save').onclick=()=>{localStorage.lang=$('#f_lang').value;const b={};F.concat([['searchApp']]).forEach(([k])=>b[k]=$('#f_'+k).value);api('config',b).then(()=>toast('Đã lưu')).catch(()=>{})};
+const loadCfg=()=>api('config').then(({cfg})=>{F.forEach(([k])=>{if(k!=='psk')$('#f_'+k).value=cfg[k]??''});$('#f_psk').placeholder=cfg.pskSet?'(đã lưu – để trống nếu giữ nguyên)':'';$('#f_searchApp').value=cfg.searchApp;$('#f_follow').value=cfg.follow||'1'}).catch(()=>{});
+// Trang HTTPS (GitHub Pages): tự tìm bridge chạy trên chính thiết bị này (localhost được trình duyệt cho phép)
+(async()=>{if(location.protocol==='https:'){for(const b of [BASE,'http://127.0.0.1:8765/'].filter(Boolean)){try{const r=await fetch(b+'api/config',{signal:AbortSignal.timeout(1500)});if((await r.json()).ok){BASE=b;localStorage.bridge=b;break}}catch{}}}loadCfg()})();
+$('#save').onclick=()=>{localStorage.lang=$('#f_lang').value;const b={};F.concat([['searchApp'],['follow']]).forEach(([k])=>b[k]=$('#f_'+k).value);api('config',b).then(()=>toast('Đã lưu')).catch(()=>{})};
 $('#diag').onclick=async()=>{$('#res').textContent='Đang kiểm tra…';try{const r=await api('status');$('#res').textContent='Sony: '+r.sony+'\nBox: '+r.box}catch(e){$('#res').textContent=''}};
 if('serviceWorker'in navigator&&isSecureContext){const had=!!navigator.serviceWorker.controller;let rl;navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>r.update());navigator.serviceWorker.addEventListener('controllerchange',()=>{if(had&&!rl){rl=1;location.reload()}})}
 $('#ssheet').onclick=e=>{if(e.target.id==='ssheet')e.target.hidden=true};$('#warn').onclick=e=>e.currentTarget.hidden=true;
