@@ -20,8 +20,8 @@ android {
         applicationId = "com.ndwood.tvremote"
         minSdk = 21
         targetSdk = 28
-        versionCode = 11
-        versionName = "2.2.0"
+        versionCode = 12
+        versionName = "2.3.0"
     }
 
     compileOptions {

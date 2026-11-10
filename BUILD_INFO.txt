@@ -1,12 +1,6 @@
-Project: TVRemote Native
-Version: 2.2.0
+Project: TVRemote Native (ứng dụng Android cho điện thoại)
+Version: 2.3.0 (versionCode 12)
 Application ID: com.ndwood.tvremote
-Min SDK: 21
-Target SDK: 28
-Compile SDK: 34
-JDK: 17
-Gradle: 8.7
-Android Gradle Plugin: 8.2.2
-Kotlin: 1.9.22
-Dependency: dev.mobile:dadb:1.2.10
-Build task: :app:assembleDebug
+Min SDK 21 · Target SDK 28 · Compile SDK 34 · JDK 17 · Gradle 8.7 · AGP 8.2.2 · Kotlin 1.9.22
+Dependencies: dev.mobile:dadb:1.2.10, androidx.core:core:1.12.0
+Điều khiển: Sony BRAVIA qua IRCC/REST (HTTP), Android TV Box qua ADB TCP (dadb).
