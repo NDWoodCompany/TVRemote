@@ -361,9 +361,9 @@ object Scene {
                 // Không cho Box ngủ nếu TV chưa nhận lệnh tắt.
                 Tv.off(assumeOn = true)
                 Thread.sleep(500)
-                val how = Box.sleep()
+                Box.sleep()
                 Cfg["sceneState"] = "sleep"
-                "Đã tắt TV và TV Box đã ngủ ($how)"
+                "Đã gửi lệnh tắt TV, sau đó gửi lệnh ngủ TV Box"
             } else {
                 // WoL/ADB đánh thức Box trước; sau đó bật TV và chọn HDMI.
                 Box.wake()
@@ -516,39 +516,7 @@ object Box {
         }
         throw Exception("Đã gửi lệnh đánh thức nhưng Box chưa báo trạng thái Awake. Có thể firmware tắt Wi-Fi/ADB khi ngủ hoặc không hỗ trợ KEYCODE_WAKEUP.")
     }
-    // ----- Ngủ Box -----
-    // Lỗi cũ: gửi "input keyevent 223" rồi CHỜ lệnh trả kết quả. Nhưng ngay khi Box bắt đầu ngủ thì Wi-Fi/ADB rớt,
-    // lệnh không bao giờ trả về => timeout 6s => app reset ADB và gửi lại, rồi báo lỗi dù Box chưa chắc đã ngủ.
-    // Cách mới: chạy lệnh NỀN trên Box (shell trả về ngay), rồi tự kiểm tra trạng thái; không ngủ thì thử phím POWER.
-    private fun detached(cmd: String) { Adb.sh("nohup sh -c 'sleep 1; $cmd' >/dev/null 2>&1 </dev/null &", 4000) }
-    // true = đang thức, false = đang ngủ (hoặc ADB đã ngắt vì Box ngủ), null = chưa xác định được
-    private fun wakefulness(ms: Long = 3500): Boolean? = try {
-        val p = Adb.sh("dumpsys power | grep -i wakefulness", ms)
-        when (Regex("(?i)(?:mWakefulness|Wakefulness)\\s*[=:]\\s*(Awake|Asleep|Dozing|Dreaming)").find(p)?.groupValues?.get(1)?.lowercase()) {
-            "awake", "dreaming" -> true
-            "asleep", "dozing" -> false
-            else -> null
-        }
-    } catch (e: Exception) { if ((e.message ?: "").contains("không mở cổng")) false else null }
-    private fun waitAsleep(sec: Int): Boolean {
-        val end = System.currentTimeMillis() + sec * 1000L
-        while (System.currentTimeMillis() < end) { Thread.sleep(800); if (wakefulness() == false) return true }
-        return false
-    }
-    fun sleep(): String {
-        var fireErr: Exception? = null
-        try { detached("input keyevent 223") } catch (e: Exception) { fireErr = e }
-        if (waitAsleep(7)) return "KEYCODE_SLEEP"
-        // Chỉ gửi POWER (phím đảo trạng thái) khi chắc chắn Box đang thức, tránh vô tình bật lại Box.
-        if (wakefulness() == true) {
-            try { detached("input keyevent 26") } catch (e: Exception) { fireErr = e }
-            if (waitAsleep(7)) return "KEYCODE_POWER"
-        }
-        throw Exception(
-            if (fireErr != null) "Không gửi được lệnh ngủ cho Box: ${fireErr.message}"
-            else "Box vẫn chưa ngủ sau lệnh KEYCODE_SLEEP(223) và POWER(26) – firmware có thể chặn phím này, hoặc không đọc được trạng thái Box."
-        )
-    }
+    fun sleep() { Adb.sh("input keyevent 223") }
     // Phím gửi qua hàng đợi: nhiều phím bấm dồn lại được gom vào MỘT lệnh "input keyevent a b c" (input trên Box rất chậm)
     @Volatile var onError: ((String) -> Unit)? = null
     private val q = LinkedBlockingQueue<Int>()
@@ -826,7 +794,7 @@ class MainActivity : Activity() {
         }
     }
     private fun onLong(id: String) {
-        if (id == "pw") action("Nguồn Box") { if (Box.isAwake()) { "TV Box đã ngủ (${Box.sleep()})" } else { Box.wake(); "Đã đánh thức TV Box" } }
+        if (id == "pw") action("Nguồn Box") { if (Box.isAwake()) { Box.sleep(); "Đã gửi lệnh ngủ cho TV Box" } else { Box.wake(); "Đã đánh thức TV Box" } }
     }
     private fun chooseInput() {
         val names = arrayOf("TV", "HDMI 1", "HDMI 2", "HDMI 3", "HDMI 4", "Chuyển vòng (INPUT)")
