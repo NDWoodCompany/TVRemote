@@ -259,14 +259,14 @@ object Disc {
     fun arp(): Map<String, String> {
         val a = try {
             File("/proc/net/arp").readLines().drop(1).mapNotNull { l ->
-                val p = l.trim().split(Regex("\s+"))
+                val p = l.trim().split(Regex("\\s+"))
                 if (p.size >= 4 && p[3].contains(":") && p[3] != "00:00:00:00:00:00") p[0] to p[3].lowercase() else null
             }.toMap()
         } catch (e: Exception) { emptyMap() }
         if (a.isNotEmpty()) return a
         return try {
             val pr = Runtime.getRuntime().exec(arrayOf("ip", "neigh")); val txt = pr.inputStream.bufferedReader().readText(); pr.waitFor()
-            txt.lines().mapNotNull { l -> val p = l.trim().split(Regex("\s+")); val i = p.indexOf("lladdr"); if (p.isNotEmpty() && i >= 0 && i + 1 < p.size) p[0] to p[i + 1].lowercase() else null }.toMap()
+            txt.lines().mapNotNull { l -> val p = l.trim().split(Regex("\\s+")); val i = p.indexOf("lladdr"); if (p.isNotEmpty() && i >= 0 && i + 1 < p.size) p[0] to p[i + 1].lowercase() else null }.toMap()
         } catch (e: Exception) { emptyMap() }
     }
     private fun sweep() {
