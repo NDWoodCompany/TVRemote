@@ -361,6 +361,208 @@ object Scene {
                 // Không cho Box ngủ nếu TV chưa nhận lệnh tắt.
                 Tv.off(assumeOn = true)
                 Thread.sleep(500)
+                val how = Box.sleep()
+                Cfg["sceneState"] = "sleep"
+                "Đã tắt TV và TV Box đã ngủ ($how)"
+            } else {
+                // WoL/ADB đánh thức Box trước; sau đó bật TV và chọn HDMI.
+                Box.wake()
+                Tv.on(assumeOff = true)
+                Tv.waitActive()
+                Tv.selectConfiguredHdmi()
+                Cfg["sceneState"] = "awake"
+                "Đã đánh thức TV Box, bật TV và chuyển sang ${Cfg["hdmi"].uppercase()}"
+            }
+        } finally { busy = false }
+    }
+}
+
+// ---------- ADB qua Wi-Fi từ điện thoại tới Android TV Box ----------
+// Mọi lệnh đều có timeout; kết nối treo/chết ngầm bị đóng và dựng lại thay vì làm đơ cả app.
+object Adb {
+    private var d: Dadb? = null
+    lateinit var dir: File
+    private val lock = Any()
+    private var lastUse = 0L
+    private val pool = Executors.newCachedThreadPool { r -> Thread(r).apply { isDaemon = true } }
+    fun reset() { val x = d; d = null; try { x?.close() } catch (e: Exception) {} }
+    private fun target(): Pair<String, Int> {
+        val host = Cfg["boxIp"].trim()
+        if (host.isEmpty()) throw Exception("Chưa nhập IP Android TV Box trong Cài đặt")
+        val port = Cfg["adbPort"].toIntOrNull()?.takeIf { it in 1..65535 } ?: throw Exception("Cổng ADB không hợp lệ")
+        return Pair(host, port)
+    }
+    fun portOpen(host: String, port: Int, ms: Int = 1500): Boolean =
+        try { Socket().use { it.connect(InetSocketAddress(host, port), ms); true } } catstandby") {
+                ircc(codes["power"]!!)
+                return
+            }
+            throw Exception("Không bật được TV bằng REST API hoặc IRCC. ${restError.message}")
+        }
+    }
+    // Nút nguồn là toggle có kiểm tra trạng thái; dùng REST API nguồn trước, IRCC làm dự phòng.
+    fun power() {
+        when (status()) {
+            "active" -> sendPowerOff()
+            "standby" -> { wol(); sendPowerOn() }
+            else -> {
+                // Khi API trạng thái không trả lời, gửi IRCC Power đúng mã Sony chuẩn.
+                ircc(codes["power"]!!)
+            }
+        }
+    }
+    fun on(assumeOff: Boolean = false) {
+        if (status() == "active") return
+        wol()
+        try { sendPowerOn() } catch (e: Exception) {
+            if (assumeOff) ircc(codes["power"]!!) else throw e
+        }
+    }
+    fun off(assumeOn: Boolean = false) {
+        if (status() == "standby") return
+        try { sendPowerOff() } catch (e: Exception) {
+            if (assumeOn) ircc(codes["power"]!!) else throw e
+        }
+    }
+    fun selectConfiguredHdmi() { ircc(codes[Cfg["hdmi"]] ?: codes["hdmi1"]!!) }
+    fun toggleHdmi(): String {
+        val next = if (Cfg["hdmi"] == "hdmi1") "hdmi2" else "hdmi1"
+        ircc(codes[next]!!)
+        Cfg["hdmi"] = next
+        return "Đã chuyển sang ${next.uppercase()}"
+    }
+    fun waitActive() {
+        for (i in 0 until 6) {
+            if (status() == "active") { Thread.sleep(500); return }
+            Thread.sleep(700)
+        }
+        // Không chặn thao tác chỉ vì firmware Sony không cung cấp trạng thái nguồn.
+        Thread.sleep(1200)
+    }
+}
+
+// ---------- Tự tìm TV (IP + MAC) trong Wi-Fi hiện tại ----------
+object Disc {
+    private var last = 0L
+    private var lastRes = "none"
+    private fun fetch(u: String, body: String? = null): Pair<Int, String>? = try {
+        val c = URL(u).openConnection() as HttpURLConnection
+        c.connectTimeout = 700; c.readTimeout = 1200
+        if (body != null) { c.requestMethod = "POST"; c.doOutput = true; c.outputStream.use { it.write(body.toByteArray()) } }
+        val code = c.responseCode
+        Pair(code, (if (code < 400) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: "")
+    } catch (e: Exception) { null }
+    fun isSony(ip: String): Boolean {
+        fetch("http://$ip:52323/dd.xml")?.let { if (it.second.contains("Sony", true)) return true }
+        val r = fetch("http://$ip/sony/system", Tv.PS) ?: return false
+        return r.second.contains("\"result\"") || r.second.contains("\"error\"")
+    }
+    // IP -> MAC từ bảng ARP (đọc được trên Android ≤ 9; Android mới hơn thì phải nhập MAC tay)
+    fun arp(): Map<String, String> {
+        val a = try {
+            File("/proc/net/arp").readLines().drop(1).mapNotNull { l ->
+                val p = l.trim().split(Regex("\\s+"))
+                if (p.size >= 4 && p[3].contains(":") && p[3] != "00:00:00:00:00:00") p[0] to p[3].lowercase() else null
+            }.toMap()
+        } catch (e: Exception) { emptyMap() }
+        if (a.isNotEmpty()) return a
+        return try {
+            val pr = Runtime.getRuntime().exec(arrayOf("ip", "neigh")); val txt = pr.inputStream.bufferedReader().readText(); pr.waitFor()
+            txt.lines().mapNotNull { l -> val p = l.trim().split(Regex("\\s+")); val i = p.indexOf("lladdr"); if (p.isNotEmpty() && i >= 0 && i + 1 < p.size) p[0] to p[i + 1].lowercase() else null }.toMap()
+        } catch (e: Exception) { emptyMap() }
+    }
+    private fun sweep() {
+        val base = myIp().substringBeforeLast('.'); if (base.count { it == '.' } != 2) return
+        val ex = Executors.newFixedThreadPool(64)
+        for (i in 1..254) ex.execute { try { InetAddress.getByName("$base.$i").isReachable(300) } catch (e: Exception) {} }
+        ex.shutdown(); ex.awaitTermination(15, java.util.concurrent.TimeUnit.SECONDS)
+    }
+    // MAC TV suy từ UDN UPnP (nhiều TV Sony đặt UDN kết thúc bằng MAC) – chỉ dùng khi ARP và REST không đọc được
+    fun udnMac(ip: String): String? {
+        val t = fetch("http://$ip:52323/dd.xml")?.second ?: return null
+        val m = Regex("<UDN>\\s*uuid:[0-9a-fA-F-]*?([0-9a-fA-F]{12})\\s*</UDN>").find(t) ?: return null
+        return m.groupValues[1].lowercase().chunked(2).joinToString(":")
+    }
+    // Quét TV + Box: tìm IP, tìm MAC, ghi thẳng vào cài đặt; trả về bản tóm tắt
+    fun scanAll(): String {
+        val out = ArrayList<String>()
+        val r = ensure(true)
+        val tvIp = Cfg["sonyIp"]
+        if (tvIp.isEmpty()) out.add("TV: không thấy trong mạng ($r). Kiểm tra TV đang bật, cùng Wi-Fi, đã bật IP Control.")
+        else {
+            var note = ""
+            if (Cfg["tvMac"].isEmpty()) {
+                val api = Tv.macFromApi()
+                if (api != null) Cfg["tvMac"] = api
+                else udnMac(tvIp)?.let { Cfg["tvMac"] = it; note = " (suy ra từ UDN, chưa xác nhận)" }
+            }
+            out.add("TV: $tvIp · MAC " + Cfg["tvMac"].ifEmpty { "không đọc được (nhập tay nếu cần bật TV từ standby)" } + note)
+        }
+        val boxes = findBox()
+        if (boxes.isNotEmpty() && Cfg["boxIp"] !in boxes) Cfg["boxIp"] = boxes[0]
+        val bip = Cfg["boxIp"]
+        if (bip.isEmpty()) out.add("Box: không thấy máy nào mở cổng ADB 5555. Bật ADB qua mạng trên Box rồi quét lại.")
+        else {
+            Adb.reset()
+            var src = "ADB"
+            var mac: String? = try { Box.mac() } catch (e: Exception) { null }
+            if (mac == null) { mac = arp()[bip]; src = "ARP" }
+            if (mac != null) Cfg["boxMac"] = mac
+            out.add("Box: $bip" + (if (boxes.size > 1) " (có ${boxes.size} máy mở cổng 5555: ${boxes.joinToString()})" else "") +
+                " · MAC " + (if (mac != null) "$mac ($src)" else "không đọc được (cho phép ADB trên TV rồi quét lại)"))
+        }
+        return out.joinToString("\n")
+    }
+    // Tìm Android TV Box: máy nào trong /24 mở cổng ADB 5555
+    fun findBox(): List<String> {
+        val base = myIp().substringBeforeLast('.'); if (base.count { it == '.' } != 2) return emptyList()
+        val ex = Executors.newFixedThreadPool(64)
+        val fs = (1..254).map { i -> ex.submit(Callable { val ip = "$base.$i"; if (Adb.portOpen(ip, 5555, 500)) ip else null }) }
+        val res = fs.mapNotNull { it.get() }; ex.shutdown(); return res
+    }
+    // ok = IP đang lưu còn đúng; standby = IP/MAC khớp nhưng TV đang ngủ; moved = đã cập nhật IP mới theo MAC;
+    // found = tìm thấy TV mới và lưu IP/MAC; none = không thấy
+    @Synchronized fun ensure(force: Boolean = false): String {
+        val ip = Cfg["sonyIp"]; val mac = Cfg["tvMac"].lowercase()
+        if (ip.isNotEmpty() && isSony(ip)) { if (mac.isEmpty()) arp()[ip]?.let { Cfg["tvMac"] = it }; return "ok" }
+        if (!force && System.currentTimeMillis() - last < 60000) return lastRes
+        sweep(); val a = arp()
+        var res = "none"
+        if (ip.isNotEmpty() && mac.isNotEmpty() && a[ip] == mac) res = "standby"
+        else {
+            val moved = if (mac.isNotEmpty()) a.entries.firstOrNull { it.value == mac }?.key else null
+            if (moved != null) { Cfg["sonyIp"] = moved; res = "moved" }
+            else {
+                val cand = if (a.isNotEmpty()) a.keys.toList() else { val b = myIp().substringBeforeLast('.'); (1..254).map { "$b.$it" } }
+                val ex = Executors.newFixedThreadPool(64)
+                val fs = cand.map { k -> ex.submit(Callable { isSony(k) }) }
+                val found = cand.filterIndexed { i, _ -> fs[i].get() }
+                ex.shutdown()
+                if (found.isNotEmpty()) { Cfg["sonyIp"] = found[0]; Cfg["tvMac"] = a[found[0]] ?: ""; res = "found" }
+            }
+        }
+        last = System.currentTimeMillis(); lastRes = res; return res
+    }
+}
+
+// ---------- Nút nguồn: bật Box -> bật TV -> HDMI; tắt TV -> tắt Box ----------
+object Scene {
+    @Volatile var busy = false
+    @Synchronized fun toggle(c: Context): String {
+        if (busy) throw Exception("Đang xử lý lệnh trước đó")
+        busy = true
+        return try {
+            val awake = try { Box.isAwake() } catch (e: Exception) {
+                when (Cfg["sceneState"]) {
+                    "awake" -> true
+                    "sleep" -> false
+                    else -> throw e
+                }
+            }
+            if (awake) {
+                // Không cho Box ngủ nếu TV chưa nhận lệnh tắt.
+                Tv.off(assumeOn = true)
+                Thread.sleep(500)
                 Box.sleep()
                 Cfg["sceneState"] = "sleep"
                 "Đã gửi lệnh tắt TV, sau đó gửi lệnh ngủ TV Box"
