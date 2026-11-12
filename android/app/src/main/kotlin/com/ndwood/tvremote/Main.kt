@@ -105,6 +105,18 @@ object Tv {
         }
         return result
     }
+    // MAC thật của TV qua REST (getNetworkSettings); ưu tiên giao diện đang giữ IP hiện tại
+    fun macFromApi(): String? = try {
+        val list = jsonRequest("getNetworkSettings", """[{"netif":""}]""").optJSONArray("result")?.optJSONArray(0)
+        var pick: String? = null
+        if (list != null) for (i in 0 until list.length()) {
+            val o = list.optJSONObject(i) ?: continue
+            val h = o.optString("hwAddr", ""); if (h.isEmpty()) continue
+            if (o.optString("ipAddrV4") == Cfg["sonyIp"]) { pick = h; break }
+            if (pick == null) pick = h
+        }
+        pick?.lowercase()
+    } catch (e: Exception) { null }
     fun status(): String = try { findStatus(jsonRequest("getPowerStatus").opt("result")) } catch (e: Exception) { "" }
     fun diag(): String = try {
         val st = status().ifEmpty { "không đọc được" }
@@ -244,17 +256,60 @@ object Disc {
         return r.second.contains("\"result\"") || r.second.contains("\"error\"")
     }
     // IP -> MAC từ bảng ARP (đọc được trên Android ≤ 9; Android mới hơn thì phải nhập MAC tay)
-    fun arp(): Map<String, String> = try {
-        File("/proc/net/arp").readLines().drop(1).mapNotNull { l ->
-            val p = l.trim().split(Regex("\\s+"))
-            if (p.size >= 4 && p[3].contains(":") && p[3] != "00:00:00:00:00:00") p[0] to p[3].lowercase() else null
-        }.toMap()
-    } catch (e: Exception) { emptyMap() }
+    fun arp(): Map<String, String> {
+        val a = try {
+            File("/proc/net/arp").readLines().drop(1).mapNotNull { l ->
+                val p = l.trim().split(Regex("\s+"))
+                if (p.size >= 4 && p[3].contains(":") && p[3] != "00:00:00:00:00:00") p[0] to p[3].lowercase() else null
+            }.toMap()
+        } catch (e: Exception) { emptyMap() }
+        if (a.isNotEmpty()) return a
+        return try {
+            val pr = Runtime.getRuntime().exec(arrayOf("ip", "neigh")); val txt = pr.inputStream.bufferedReader().readText(); pr.waitFor()
+            txt.lines().mapNotNull { l -> val p = l.trim().split(Regex("\s+")); val i = p.indexOf("lladdr"); if (p.isNotEmpty() && i >= 0 && i + 1 < p.size) p[0] to p[i + 1].lowercase() else null }.toMap()
+        } catch (e: Exception) { emptyMap() }
+    }
     private fun sweep() {
         val base = myIp().substringBeforeLast('.'); if (base.count { it == '.' } != 2) return
         val ex = Executors.newFixedThreadPool(64)
         for (i in 1..254) ex.execute { try { InetAddress.getByName("$base.$i").isReachable(300) } catch (e: Exception) {} }
         ex.shutdown(); ex.awaitTermination(15, java.util.concurrent.TimeUnit.SECONDS)
+    }
+    // MAC TV suy từ UDN UPnP (nhiều TV Sony đặt UDN kết thúc bằng MAC) – chỉ dùng khi ARP và REST không đọc được
+    fun udnMac(ip: String): String? {
+        val t = fetch("http://$ip:52323/dd.xml")?.second ?: return null
+        val m = Regex("<UDN>\\s*uuid:[0-9a-fA-F-]*?([0-9a-fA-F]{12})\\s*</UDN>").find(t) ?: return null
+        return m.groupValues[1].lowercase().chunked(2).joinToString(":")
+    }
+    // Quét TV + Box: tìm IP, tìm MAC, ghi thẳng vào cài đặt; trả về bản tóm tắt
+    fun scanAll(): String {
+        val out = ArrayList<String>()
+        val r = ensure(true)
+        val tvIp = Cfg["sonyIp"]
+        if (tvIp.isEmpty()) out.add("TV: không thấy trong mạng ($r). Kiểm tra TV đang bật, cùng Wi-Fi, đã bật IP Control.")
+        else {
+            var note = ""
+            if (Cfg["tvMac"].isEmpty()) {
+                val api = Tv.macFromApi()
+                if (api != null) Cfg["tvMac"] = api
+                else udnMac(tvIp)?.let { Cfg["tvMac"] = it; note = " (suy ra từ UDN, chưa xác nhận)" }
+            }
+            out.add("TV: $tvIp · MAC " + Cfg["tvMac"].ifEmpty { "không đọc được (nhập tay nếu cần bật TV từ standby)" } + note)
+        }
+        val boxes = findBox()
+        if (boxes.isNotEmpty() && Cfg["boxIp"] !in boxes) Cfg["boxIp"] = boxes[0]
+        val bip = Cfg["boxIp"]
+        if (bip.isEmpty()) out.add("Box: không thấy máy nào mở cổng ADB 5555. Bật ADB qua mạng trên Box rồi quét lại.")
+        else {
+            Adb.reset()
+            var src = "ADB"
+            var mac: String? = try { Box.mac() } catch (e: Exception) { null }
+            if (mac == null) { mac = arp()[bip]; src = "ARP" }
+            if (mac != null) Cfg["boxMac"] = mac
+            out.add("Box: $bip" + (if (boxes.size > 1) " (có ${boxes.size} máy mở cổng 5555: ${boxes.joinToString()})" else "") +
+                " · MAC " + (if (mac != null) "$mac ($src)" else "không đọc được (cho phép ADB trên TV rồi quét lại)"))
+        }
+        return out.joinToString("\n")
     }
     // Tìm Android TV Box: máy nào trong /24 mở cổng ADB 5555
     fun findBox(): List<String> {
@@ -403,6 +458,16 @@ object Box {
         var err: Exception? = null
         for (p in pkgs) { try { launch(p); return } catch (e: Exception) { err = e } }
         throw err ?: Exception("Không mở được TV360")
+    }
+    fun mac(): String? {
+        val ip = Cfg["boxIp"].trim()
+        val ifn = Adb.sh("ip -o -4 addr show").lines().firstOrNull { it.contains("inet $ip/") }?.trim()?.split(Regex("\\s+"))?.getOrNull(1)?.trimEnd(':')
+        val cand = if (ifn != null && ifn.matches(Regex("[\\w.-]+"))) listOf(ifn) else listOf("eth0", "wlan0")
+        for (n in cand) {
+            val m = Adb.sh("cat /sys/class/net/$n/address").trim()
+            if (m.matches(Regex("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}")) && m != "00:00:00:00:00:00") return m.lowercase()
+        }
+        return null
     }
     fun isAwake(): Boolean {
         var p = Adb.sh("dumpsys power | grep -i wakefulness", 9000); if (!p.contains("akefulness", true)) p = Adb.sh("dumpsys power", 9000)
@@ -678,10 +743,10 @@ class MainActivity : Activity() {
     private fun buildUi() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(bg) }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(2), dp(4), 0) }
-        status = TextView(this).apply { textSize = 12f; setTextColor(0xFF9AA3B5.toInt()); maxLines = 3 }
+        status = TextView(this).apply { textSize = 11.5f; setTextColor(0xFF9AA3B5.toInt()); maxLines = 4 }
         head.addView(status, LinearLayout.LayoutParams(0, -2, 1f))
         head.addView(IconView(this, "refresh").apply { setOnClickListener { discover() } }, LinearLayout.LayoutParams(dp(48), dp(48)))
-        root.addView(head, LinearLayout.LayoutParams(-1, dp(52)))
+        root.addView(head, LinearLayout.LayoutParams(-1, dp(66)))
         container = FrameLayout(this); root.addView(container, LinearLayout.LayoutParams(-1, 0, 1f))
         val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("remote", "keypad", "gear").forEachIndexed { i, kind -> val v = IconView(this, kind); v.setOnClickListener { selectedTab = i; renderTab() }; navs.add(v); nav.addView(v, LinearLayout.LayoutParams(0, dp(54), 1f)) }
@@ -754,11 +819,10 @@ class MainActivity : Activity() {
         for (r in 0 until 4) row(tabArea, *(0 until 3).map { c -> k[r * 3 + c] to { boxKey(k[r * 3 + c], false) } }.toTypedArray())
     }
     private fun discover() = action("Tìm thiết bị") {
-        val r = Disc.ensure(true)
-        val boxes = Disc.findBox()
-        if (boxes.isNotEmpty() && Cfg["boxIp"] !in boxes) Cfg["boxIp"] = boxes[0]
-        Adb.reset(); runOnUiThread { refreshStatus() }
-        "Quét xong · TV: ${Cfg["sonyIp"].ifEmpty { "không thấy ($r)" }} · Box: ${if (boxes.isEmpty()) "không thấy máy nào mở cổng ADB 5555" else boxes.joinToString()}"
+        val msg = Disc.scanAll()
+        Adb.reset()
+        runOnUiThread { refreshStatus(); if (selectedTab == 2) renderTab() }   // cập nhật luôn các ô trong Cài đặt
+        "Đã quét và lưu vào cài đặt:\n$msg"
     }
     private fun checkConnections() = action("Kiểm tra TV + Box") {
         val tv = Tv.diag()
@@ -782,6 +846,7 @@ class MainActivity : Activity() {
         val boxMac = field("MAC TV Box (Wake-on-LAN, nếu hỗ trợ)", "boxMac", "AA:BB:CC:DD:EE:FF")
         val search = field("Gói ứng dụng YouTube/tìm kiếm trên Box", "searchApp", "com.teamsmart.videomanager.tv")
         val t360 = field("Gói TV360 (trống = tự dò)", "tv360App", "tự dò gói có chữ tv360")
+        row(tabArea, "TỰ TÌM TV + BOX (IP + MAC)" to { discover() })
         row(tabArea, "LƯU CẤU HÌNH" to {
             Cfg["sonyIp"] = tv.text.toString().trim(); Cfg["boxIp"] = box.text.toString().trim()
             Cfg["adbPort"] = port.text.toString().trim().ifEmpty { "5555" }; Cfg["psk"] = psk.text.toString().trim()
